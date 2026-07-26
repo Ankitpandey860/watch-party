@@ -1,0 +1,19 @@
+config:
+  target: "http://localhost:4000"
+
+  phases:
+
+    - duration: 30
+      arrivalRate: 10
+
+    - duration: 60
+      arrivalRate: 25
+
+    - duration: 120
+      arrivalRate: 50
+
+  processor: "./processor.js"
+
+scenarios:
+  - flow:
+      - function: runScenario

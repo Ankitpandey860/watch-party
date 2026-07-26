@@ -22,3 +22,9 @@ Thumbs.db
 
 # misc
 coverage/
+node_modules/
+.env
+.env.local
+
+load-test/node_modules/
+load-test/rooms.json

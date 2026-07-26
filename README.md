@@ -1,134 +1,306 @@
-# Watchly — YouTube Watch Party
+# 🎬 Watch Party
 
-A full-stack real-time watch-party app: React/TanStack Start frontend
-(pre-existing) + a new Node/Express/Socket.IO backend (this deliverable).
+A real-time Watch Party application that allows multiple users to watch YouTube videos together in synchronized playback. The application supports room-based collaboration, live chat, host controls, participant management, and seamless synchronization using WebSockets.
 
-```
-project/
-  frontend/watch-party-hq-main/   # pre-existing UI (unchanged design/components)
-  backend/                        # new — Express + Socket.IO, in-memory
-```
+---
 
-## Running locally
+## 🚀 Live Demo
 
-**Backend**
-```bash
-cd backend
-cp .env.example .env
-npm install
-npm run dev        # http://localhost:4000
-```
+### Frontend
+> https://watch-party-lyart-ten.vercel.app/
 
-**Frontend**
-```bash
-cd frontend/watch-party-hq-main
-cp .env.example .env      # already points at http://localhost:4000 by default
-npm install --legacy-peer-deps   # see note below
-npm run dev         # http://localhost:3000 (TanStack Start dev server)
-```
+### Backend
+> https://watch-party-dv20.onrender.com
 
-> **Note on `--legacy-peer-deps`**: the frontend's own `package.json` (as
-> provided, untouched) has a pre-existing peer-dependency conflict between
-> `@hookform/resolvers@5.x` and `valibot` — unrelated to this integration.
-> `npm install --legacy-peer-deps` resolves it; a plain `npm install` fails
-> the same way with or without the backend changes.
+---
 
-Then open `http://localhost:3000`, create a room, and open the room URL in a
-second tab/browser to test multi-user sync.
+## ✨ Features
 
-## Backend architecture
+### 👥 Room Management
+- Create a new watch room
+- Join existing rooms using Room ID
+- Automatic room cleanup
+- Disconnect grace period
+- Automatic host transfer when the current host leaves
 
-See `backend/README.md` for the full write-up (folder structure, room model,
-role enforcement, presence/disconnect handling, REST + Socket.IO event
-reference, deployment notes).
+### 🎥 Video Synchronization
+- Shared YouTube video playback
+- Play / Pause synchronization
+- Seek synchronization
+- Real-time playback state updates
+- New participants receive the latest playback state instantly
 
-In short: everything is in-memory (`RoomManager` singleton holding `Room` →
-`Participant` objects), REST is used only to mint a room/seat before the
-socket connects, and Socket.IO carries all real-time state (playback sync,
-roster, roles). The server is the single source of truth for role
-permissions — it never trusts a role claimed by the client.
+### 💬 Live Chat
+- Real-time messaging
+- Username-based chat
+- Message validation
+- Instant broadcasting using Socket.IO
 
-## Frontend ↔ backend mapping
+### 👤 Participant Management
+- Live participant list
+- Online / Offline tracking
+- Host and Participant roles
+- Automatic participant updates
 
-The frontend (`watch-party-hq-main`) arrived as a **UI-only scaffold** from
-Lovable: every component was fully built, but the entire data layer was
-placeholder. Specifically, before this integration:
+### ⚡ Real-time Communication
+- WebSocket powered communication
+- Low latency synchronization
+- Event-based architecture
 
-- `src/services/api.js`, `roomService.js`, `socketService.js` — all
-  `// TODO`, no real HTTP or socket calls.
-- `src/context/RoomContext.jsx` — held hardcoded fake participants and never
-  changed except via local `setState`.
-- `src/pages/Room/RoomPage.jsx` — every handler (`handlePlay`, `handleSeek`,
-  `handleAssignRole`, etc.) just mutated local React state with a `// TODO:
-  emit socket ...` comment; nothing ever reached a server.
+---
 
-**No visual component (`Player`, `Controls`, `ParticipantCard`, `RoleBadge`,
-`RoomInfo`, `VideoInput`, `Card`, `Button`, etc.) was modified.** The only
-files touched are the integration layer:
+# 🛠 Tech Stack
 
-| Frontend file | Change |
-|---|---|
-| `src/services/api.js` | Implemented: axios instance pointed at the backend, `VITE_API_BASE_URL`/`VITE_SOCKET_URL`, normalizes backend error shape |
-| `src/services/roomService.js` | Implemented: `createRoom`, `joinRoom`, `getRoom` — call the REST endpoints below |
-| `src/services/socketService.js` | Implemented: `socket.io-client` wiring (`connect`, `disconnect`, `emit`, `on`) |
-| `src/context/RoomContext.jsx` | Rewritten: real state driven by REST results + socket events, session persistence (see below), all room actions (`play`, `pause`, `seek`, `changeVideo`, `assignRole`, `removeParticipant`, `transferHost`, `leaveRoom`) |
-| `src/pages/Room/RoomPage.jsx` | Handlers now call the context actions above instead of mutating local state; connects the socket on mount, disconnects on unmount, restores identity from session storage on refresh |
-| `src/pages/Home/CreateRoomCard.jsx`, `JoinRoomCard.jsx` | Call `roomService`-backed context methods (`createRoomAndEnter`/`joinRoomAndEnter`) instead of faking a room code client-side; show real errors via `sonner` toasts |
-| `src/routes/__root.tsx` | `RoomProvider` moved here (was previously re-instantiated separately in both `routes/index.tsx` and `routes/room.$roomId.tsx`, which silently dropped username/role state on navigation from `/` to `/room/:id` — see below); mounted `<Toaster />` for error/connection feedback |
-| `src/routes/index.tsx`, `routes/room.$roomId.tsx` | Removed their now-duplicate local `<RoomProvider>` wrapper |
-| `package.json` | Added `socket.io-client` dependency (was missing entirely) |
+## Frontend
 
-### The one structural fix that was "unavoidable"
+- React.js
+- Vite
+- Tailwind CSS
+- Socket.IO Client
+- Axios
 
-Both routes wrapped their page in their own `<RoomProvider>` instance:
+## Backend
 
-```jsx
-// routes/index.tsx (before)
-<RoomProvider><HomePage /></RoomProvider>
-// routes/room.$roomId.tsx (before)
-<RoomProvider><RoomPage /></RoomProvider>
-```
-
-Since `RoomProvider` holds `useState`, and each route mounts a *new* instance
-on navigation, any state `CreateRoomCard`/`JoinRoomCard` set on the home
-page's provider (username, roomId, role) was thrown away the instant
-`navigate()` moved to `/room/:roomId` — the room page's fresh provider was
-back to defaults (`username: ""`, `role: "host"`). This wasn't reachable with
-the old fake/local-only data because nothing depended on it surviving
-navigation, but it breaks the moment real identity from the backend has to
-survive the trip. The fix was to lift `RoomProvider` to `routes/__root.tsx`
-(mounted once for the whole app) and remove the two duplicate wrappers — a
-one-line change in three files, no component logic touched.
-
-### Session persistence (refresh survival)
-
-`RoomContext` also persists `{ userId, username, role }` to
-`sessionStorage` (keyed per room) after create/join. If someone hard-refreshes
-`/room/:roomId`, `RoomPage` restores identity from that instead of losing the
-socket connection entirely; if there's no session for that room (e.g. a cold
-link with no prior create/join), it redirects home with a toast rather than
-silently joining as an empty username.
-
-### Endpoint / event contract
-
-REST (frontend → backend, before the socket connects):
-
-```
-POST /api/rooms                  { username } -> { roomId, userId, username, role: "host" }
-POST /api/rooms/:roomId/join     { username } -> { roomId, userId, username, role: "participant" }
-GET  /api/rooms/:roomId          -> { roomId, participantCount, onlineCount, currentVideo }
-```
-
-Socket.IO events match 1:1 with what `RoomPage`'s original TODO comments
-named (`play`, `pause`, `seek`, `change_video`, `assign_role`,
-`remove_participant`) plus `transfer_host`, `join_room`, `leave_room`, and the
-server broadcasts (`room_state`, `sync_state`, `user_joined`, `user_left`,
-`role_assigned`, `participant_removed`, `host_changed`). Full table in
-`backend/README.md`.
+- Node.js
+- Express.js
+- Socket.IO
+- REST API
 
 ## Deployment
 
-Deploy `backend/` and `frontend/watch-party-hq-main/` as two separate
-services (e.g. both on Render, or backend on Render + frontend on Vercel).
-Set the frontend's `VITE_API_BASE_URL` / `VITE_SOCKET_URL` to the deployed
-backend URL, and the backend's `CORS_ORIGIN` to the deployed frontend URL.
+- Vercel (Frontend)
+- Render (Backend)
+
+## Load Testing
+
+- Artillery
+
+---
+
+# 📂 Project Structure
+
+```
+Watch-Party
+│
+├── frontend
+│   ├── src
+│   ├── components
+│   ├── pages
+│   └── context
+│
+├── backend
+│   ├── controllers
+│   ├── services
+│   ├── models
+│   ├── routes
+│   ├── sockets
+│   ├── utils
+│   └── config
+│
+└── load-test
+```
+
+---
+
+# 🔄 Application Flow
+
+```
+User
+
+↓
+
+Create Room
+
+↓
+
+REST API
+
+↓
+
+Room Created
+
+↓
+
+Join Room
+
+↓
+
+Socket Connection
+
+↓
+
+Room State
+
+↓
+
+Live Chat
+
+↓
+
+Video Synchronization
+
+↓
+
+Participant Updates
+
+↓
+
+Disconnect
+```
+
+---
+
+# ⚙️ Installation
+
+## Clone Repository
+
+```bash
+git clone https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git
+```
+
+## Install Dependencies
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+```
+
+### Backend
+
+```bash
+cd backend
+npm install
+```
+
+---
+
+# ▶️ Run Locally
+
+## Backend
+
+```bash
+npm run dev
+```
+
+## Frontend
+
+```bash
+npm run dev
+```
+
+---
+
+# 🔑 Environment Variables
+
+## Backend (.env)
+
+```env
+PORT=4000
+
+CLIENT_URL=http://localhost:5173
+```
+
+---
+
+## Frontend (.env)
+
+```env
+VITE_API_BASE_URL=http://localhost:4000/api
+
+VITE_SOCKET_URL=http://localhost:4000
+```
+
+---
+
+# 📡 REST APIs
+
+| Method | Endpoint | Description |
+|---------|----------|-------------|
+| POST | /api/rooms | Create Room |
+| POST | /api/rooms/:roomId/join | Join Room |
+| GET | /api/rooms/:roomId | Get Room Details |
+| GET | /api/health | Health Check |
+
+---
+
+# 🔌 Socket Events
+
+## Client Events
+
+- join_room
+- leave_room
+- send_message
+- play
+- pause
+- seek
+- change_video
+- time_sync
+
+---
+
+## Server Events
+
+- room_state
+- sync_state
+- user_joined
+- user_left
+- participants_updated
+- host_changed
+- new_message
+- error_event
+
+---
+
+# 🧪 Load Testing
+
+Load testing was performed using **Artillery**.
+
+### Test Configuration
+
+- Pre-created Rooms: **100**
+- Total Virtual Users: **7800**
+- Failed Users: **0**
+- Average Session Duration: **7.5 seconds**
+
+The application successfully handled all simulated users without failures while maintaining stable WebSocket connections.
+
+---
+
+# 📸 Screenshots
+
+Add screenshots of:
+
+- Home Page
+- Create Room
+- Join Room
+- Chat
+- Watch Party
+- Load Testing Result
+
+---
+
+# 📹 Demo
+
+(Optional)
+
+Include a short demonstration video showing:
+
+- Room Creation
+- Joining Room
+- Video Synchronization
+- Live Chat
+- Host Transfer
+
+---
+
+# 👨‍💻 Author
+
+**Ankit Pandey**
+
+GitHub:
+https://github.com/Ankitpandey860
+
+LinkedIn:
+https://www.linkedin.com/in/ankit-pandey-042116325/

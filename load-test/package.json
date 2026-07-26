@@ -1,0 +1,16 @@
+{
+  "name": "watch-party-load-test",
+  "version": "1.0.0",
+  "description": "Artillery load testing for Watch Party application",
+  "type": "module",
+  "scripts": {
+    "setup": "node setup.js",
+    "load": "artillery run artillery.yml"
+  },
+  "dependencies": {
+    "artillery": "^2.0.27",
+    "axios": "^1.11.0",
+    "socket.io-client": "^4.8.1",
+    "uuid": "^11.1.0"
+  }
+}
