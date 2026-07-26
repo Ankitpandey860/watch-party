@@ -1,0 +1,21 @@
+{
+  "name": "watch-party-backend",
+  "version": "1.0.0",
+  "description": "Backend for Watchly — a YouTube watch party app. Express + Socket.IO, fully in-memory, no auth, no database.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "uuid": "^9.0.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
