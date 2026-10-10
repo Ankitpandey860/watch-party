@@ -1,26 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { HomePage } from "../pages/Home/HomePage";
+import { LandingPage } from "../pages/Landing/LandingPage";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Watchly — Watch YouTube Together in Sync" },
+      { title: "Watchly — Watch YouTube together, perfectly in sync" },
       {
         name: "description",
         content:
-          "Create or join a watch party in seconds. Enjoy YouTube videos with friends in perfect sync with roles, chat-ready controls, and a beautiful dark UI.",
+          "Create a private watch party in seconds. Friends join from an invite link, and everyone's playback stays in sync with live chat and host controls.",
       },
-      { property: "og:title", content: "Watchly — Watch YouTube Together in Sync" },
+      { property: "og:title", content: "Watchly — Watch YouTube together, perfectly in sync" },
       {
         property: "og:description",
-        content:
-          "Create or join a watch party in seconds. Watch YouTube with friends in perfect sync.",
+        content: "Private watch parties with synchronized playback, live chat and host controls.",
       },
     ],
   }),
-  component: Index,
+  component: LandingPage,
 });
-
-function Index() {
-  return <HomePage />;
-}

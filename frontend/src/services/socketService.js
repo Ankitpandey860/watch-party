@@ -1,50 +1,53 @@
 import { io } from "socket.io-client";
 import { SOCKET_URL } from "./api";
+import roomService from "./roomService";
 
-// Socket.IO client wiring against the Express + Socket.IO backend
-// (see /backend/src/socket). Event names below must match
-// /backend/src/constants/events.js exactly.
+// Socket.IO client. Event names must match backend/src/constants/events.js.
+//
+// Identity is NEVER sent by the client. On every (re)connection attempt the `auth` callback below
+// fetches a fresh one-time ticket over REST (using the session cookie); the server derives who we
+// are from that ticket alone.
 
 let socket = null;
-
-function ensureSocket() {
-  if (!socket) {
-    socket = io(SOCKET_URL, {
-      autoConnect: false,
-      transports: ["websocket", "polling"],
-    });
-  }
-  return socket;
-}
+let ticketFailure = null; // why the last ticket request failed (404 room gone, 403 banned, 401 signed out...)
 
 export const socketService = {
-  /**
-   * Opens the connection (if needed) and emits join_room — both on the initial
-   * call and automatically again on every reconnect, so a dropped wifi
-   * connection rejoins the room without the user doing anything.
-   */
-  connect(roomId, userId, username) {
-    const s = ensureSocket();
-    const doJoin = () => s.emit("join_room", { roomId, userId, username });
-
-    s.off("connect", doJoin);
-    s.on("connect", doJoin);
-
-    if (s.connected) {
-      doJoin();
-    } else {
-      s.connect();
-    }
+  /** Opens the connection and joins `roomId` (again on every automatic reconnect). */
+  connect(roomId) {
+    this.disconnect({ silent: true });
+    ticketFailure = null;
+    const s = io(SOCKET_URL, {
+      autoConnect: false,
+      transports: ["websocket", "polling"],
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 8000,
+      auth: async (cb) => {
+        try {
+          cb({ ticket: await roomService.socketTicket(roomId) });
+          ticketFailure = null;
+        } catch (err) {
+          ticketFailure = { status: err.status, code: err.code, message: err.message };
+          cb({ ticket: "" }); // the server refuses an empty ticket; the failure reason is kept above
+        }
+      },
+    });
+    s.on("connect", () => s.emit("join_room", { roomId }));
+    socket = s;
+    s.connect();
     return s;
   },
 
-  disconnect() {
-    if (socket) {
-      if (socket.connected) socket.emit("leave_room");
-      socket.removeAllListeners();
-      socket.disconnect();
-      socket = null;
-    }
+  /** Reconnects with a fresh ticket (e.g. after the session was re-issued). */
+  reconnect() {
+    if (socket && !socket.connected) socket.connect();
+  },
+
+  disconnect({ silent = false } = {}) {
+    if (!socket) return;
+    if (socket.connected && !silent) socket.emit("leave_room");
+    socket.removeAllListeners();
+    socket.disconnect();
+    socket = null;
   },
 
   emit(event, payload) {
@@ -52,11 +55,16 @@ export const socketService = {
     socket.emit(event, payload);
   },
 
-  /** Subscribes to a server event; returns an unsubscribe function. */
+  /** Subscribes to a socket event (including connect / disconnect / connect_error); returns an unsubscribe function. */
   on(event, handler) {
-    const s = ensureSocket();
+    if (!socket) return () => {};
+    const s = socket;
     s.on(event, handler);
     return () => s.off(event, handler);
+  },
+
+  get lastTicketFailure() {
+    return ticketFailure;
   },
 
   get isConnected() {

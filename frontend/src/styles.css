@@ -154,10 +154,7 @@
     color: var(--color-foreground);
     font-family: ui-sans-serif, system-ui, -apple-system, "Inter", "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
-    background-image:
-      radial-gradient(1200px 600px at 10% -10%, oklch(0.65 0.22 15 / 12%), transparent 60%),
-      radial-gradient(900px 500px at 110% 10%, oklch(0.62 0.2 280 / 12%), transparent 60%);
-    background-attachment: fixed;
+    min-height: 100dvh;
   }
 }
 
@@ -184,4 +181,39 @@
 
 @utility shadow-glow {
   box-shadow: var(--shadow-glow);
+}
+
+
+/* ---- 3D backdrop fallback (always rendered under the WebGL canvas) ------------------------- */
+.backdrop-static {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(60% 55% at 50% 42%, oklch(0.62 0.2 280 / 28%), transparent 70%),
+    radial-gradient(45% 40% at 18% 20%, oklch(0.65 0.22 15 / 22%), transparent 70%),
+    radial-gradient(40% 40% at 85% 80%, oklch(0.7 0.16 235 / 18%), transparent 70%),
+    var(--background);
+}
+
+/* ---- Tilt card: real CSS 3D transforms driven by the pointer (see components/TiltCard.jsx) --- */
+.tilt-scene { perspective: 1000px; }
+.tilt-card {
+  transform-style: preserve-3d;
+  transition: transform 180ms ease-out, box-shadow 180ms ease-out;
+  will-change: transform;
+}
+.tilt-card > .tilt-lift { transform: translateZ(24px); }
+
+/* Visible keyboard focus everywhere */
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+/* Respect reduced motion: no transitions/animations, no tilt */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .tilt-card { transform: none !important; }
 }

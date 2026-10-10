@@ -11,13 +11,30 @@ export const ERROR_CODES = Object.freeze({
   CANNOT_ACT_ON_SELF: "CANNOT_ACT_ON_SELF",
   NOT_IN_ROOM: "NOT_IN_ROOM",
   INTERNAL_ERROR: "INTERNAL_ERROR",
+  // --- auth / session
+  UNAUTHENTICATED: "UNAUTHENTICATED", // no valid session
+  SESSION_EXPIRED: "SESSION_EXPIRED",
+  FORBIDDEN: "FORBIDDEN", // authenticated but not allowed (e.g. guest creating a room)
+  CSRF_REJECTED: "CSRF_REJECTED",
+  INVALID_CODE: "INVALID_CODE", // wrong / expired / used OTP (deliberately indistinguishable)
+  EMAIL_UNAVAILABLE: "EMAIL_UNAVAILABLE",
+  OAUTH_UNAVAILABLE: "OAUTH_UNAVAILABLE",
+  // --- rooms / abuse
+  BANNED: "BANNED",
+  ROOM_FULL: "ROOM_FULL",
+  ROOM_LIMIT: "ROOM_LIMIT",
+  SERVER_BUSY: "SERVER_BUSY",
+  RATE_LIMITED: "RATE_LIMITED",
+  INVALID_JSON: "INVALID_JSON",
+  PAYLOAD_TOO_LARGE: "PAYLOAD_TOO_LARGE",
 });
 
 export class AppError extends Error {
-  constructor(code, message, statusCode = 400) {
+  constructor(code, message, statusCode = 400, extra = undefined) {
     super(message || code);
     this.name = "AppError";
     this.code = code;
     this.statusCode = statusCode;
+    this.extra = extra; // safe, client-visible extras (e.g. { retryAfterSeconds })
   }
 }

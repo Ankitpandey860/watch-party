@@ -30,5 +30,6 @@ export const SERVER_EVENTS = Object.freeze({
   HOST_CHANGED: "host_changed",
   REMOVED_FROM_ROOM: "removed_from_room", // sent only to the participant who got kicked
   NEW_MESSAGE: "new_message", // broadcast to the room whenever a chat message is sent
+  AUTH_EXPIRED: "auth_expired", // session ended (expired / logged out / revoked); the socket is then closed
   ERROR: "error_event", // "error" is a reserved Socket.IO event name, so we use our own
 });

@@ -7,6 +7,8 @@ node_modules/
 # environment
 .env
 .env.*
+# ...but keep the committed, secret-free templates
+!.env.example
 
 # build
 dist/
@@ -28,3 +30,5 @@ node_modules/
 
 load-test/node_modules/
 load-test/rooms.json
+# local embedded database
+.data/

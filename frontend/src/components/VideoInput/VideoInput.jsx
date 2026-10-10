@@ -3,11 +3,16 @@ import { Link as LinkIcon, RefreshCw } from "lucide-react";
 import { Card } from "../Card";
 import { Input } from "../Input";
 import { Button } from "../Buttons/Button";
-import { extractYouTubeId } from "../../utils/youtube";
+import providerRegistry from "../../providers";
 
 export function VideoInput({ disabled, onChangeVideo }) {
   const [url, setUrl] = useState("");
-  const valid = extractYouTubeId(url);
+  const resolved = providerRegistry.resolve(url);
+  const valid = Boolean(resolved);
+  const label = providerRegistry
+    .list()
+    .map((p) => p.label)
+    .join(" / ");
 
   return (
     <Card className="p-4 sm:p-5">
@@ -16,7 +21,7 @@ export function VideoInput({ disabled, onChangeVideo }) {
           <LinkIcon className="h-4 w-4 text-muted-foreground" />
         </div>
         <div>
-          <p className="text-sm font-medium">Load a YouTube video</p>
+          <p className="text-sm font-medium">Load a video ({label})</p>
           <p className="text-xs text-muted-foreground">
             Everyone in the room will watch what you set.
           </p>
@@ -31,11 +36,12 @@ export function VideoInput({ disabled, onChangeVideo }) {
         className="flex flex-col gap-2 sm:flex-row"
       >
         <Input
-          placeholder="https://www.youtube.com/watch?v=..."
+          aria-label="Video link"
+          placeholder={providerRegistry.list()[0].placeholder}
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           disabled={disabled}
-          error={url && !valid ? "Enter a valid YouTube URL" : ""}
+          error={url && !valid ? `Enter a valid ${label} link or video ID` : ""}
         />
         <Button type="submit" disabled={disabled || !valid} className="sm:w-auto">
           <RefreshCw className="h-4 w-4" />

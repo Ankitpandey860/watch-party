@@ -6,114 +6,112 @@ import { AppError, ERROR_CODES } from "../../constants/errors.js";
 import { normalizeRoomId } from "../../utils/idGenerator.js";
 import { config } from "../../config/env.js";
 import { emitError, broadcastParticipants } from "../socketUtils.js";
+import { onPayload, onSignal } from "../safeHandler.js";
 import { logger } from "../../utils/logger.js";
 
+function announceHostChange(io, room) {
+  io.to(room.roomId).emit(SERVER_EVENTS.HOST_CHANGED, { hostId: room.hostId, participants: room.publicRoster() });
+}
+
 /**
- * Fully removes a participant from a room: clears timers, hands off the host
- * crown if needed, broadcasts the change, and garbage-collects an empty room.
- * Shared by leave_room, remove_participant, and the disconnect grace-timeout.
+ * Fully removes a participant: clears timers, covers for an absent host, broadcasts, and schedules
+ * garbage collection of an emptied room. Shared by leave_room and the disconnect grace timeout.
  */
-function departParticipant(io, room, userId, { reasonEvent, extraPayload } = {}) {
+function departParticipant(io, room, userId, { reasonEvent } = {}) {
   const participant = room.getParticipant(userId);
   if (!participant) return;
 
   const wasHost = room.hostId === userId;
   room.removeParticipant(userId);
 
-  let hostChange = null;
+  if (reasonEvent) {
+    io.to(room.roomId).emit(reasonEvent, { userId, username: participant.username, participants: room.publicRoster() });
+  }
+
   if (wasHost && !room.isEmpty()) {
     const next = room.pickNextHost(userId);
     if (next) {
-      room.setHost(next.id);
-      hostChange = { hostId: next.id };
+      room.promoteActingHost(next);
+      announceHostChange(io, room);
     }
   }
 
-  if (reasonEvent) {
-    io.to(room.roomId).emit(reasonEvent, {
-      userId,
-      username: participant.username,
-      participants: room.listParticipants().map((p) => p.toPublic()),
-      ...extraPayload,
-    });
-  }
+  if (room.isEmpty()) roomManager.scheduleEmptyRoomCleanup(room.roomId);
+}
 
-  if (hostChange) {
-    io.to(room.roomId).emit(SERVER_EVENTS.HOST_CHANGED, {
-      hostId: hostChange.hostId,
-      participants: room.listParticipants().map((p) => p.toPublic()),
-    });
-  }
-
-  if (room.isEmpty()) {
-    roomManager.scheduleEmptyRoomCleanup(room.roomId);
-  }
+/**
+ * When the host's socket drops, don't hand over instantly (a page refresh or mobile network blip
+ * would permanently cost them the room). Wait `hostGraceMs`; only then does a signed-in participant
+ * cover for them. The owner regains host automatically on return (see join_room).
+ */
+function scheduleHostFailover(io, room, absentHostId) {
+  room.clearHostGraceTimer();
+  room.hostGraceTimer = setTimeout(() => {
+    room.hostGraceTimer = null;
+    const absent = room.getParticipant(absentHostId);
+    if (room.hostId !== absentHostId || (absent && absent.online)) return;
+    const next = room.pickNextHost(absentHostId);
+    if (!next) return;
+    room.promoteActingHost(next);
+    announceHostChange(io, room);
+    logger.info(`Host absent in room ${room.roomId}; ${next.kind} participant now acting host`);
+  }, config.rooms.hostGraceMs);
+  room.hostGraceTimer.unref?.();
 }
 
 export function registerRoomHandlers(io, socket) {
-  socket.on("join_room", ({ roomId, userId, username } = {}) => {
-    try {
+  onPayload(
+    socket,
+    "join_room",
+    ({ roomId }) => {
       const id = normalizeRoomId(roomId);
-      if (!id || !userId) {
-        throw new AppError(ERROR_CODES.INVALID_PAYLOAD, "roomId and userId are required.", 400);
-      }
+      if (!id) throw new AppError(ERROR_CODES.INVALID_PAYLOAD, "roomId is required.", 400);
 
+      // The ticket was minted for ONE room; it cannot be used to enter another.
+      if (socket.data.ticketRoomId !== id) {
+        throw new AppError(ERROR_CODES.NOT_AUTHORIZED, "This connection isn't authorised for that room.", 403);
+      }
       const room = roomManager.getRoom(id);
-      if (!room) {
-        throw new AppError(ERROR_CODES.ROOM_NOT_FOUND, `Room ${id} doesn't exist.`, 404);
-      }
+      if (!room) throw new AppError(ERROR_CODES.ROOM_NOT_FOUND, "This room doesn't exist or has ended.", 404);
 
-      let participant = room.getParticipant(userId);
+      const principal = socket.data.principal;
+      if (room.isBanned(principal.id)) throw new AppError(ERROR_CODES.BANNED, "You were removed from this room and can't rejoin.", 403);
 
+      let participant = room.getParticipant(principal.id);
       if (!participant) {
-        // Safety net: normally the REST createRoom/joinRoom call already reserved
-        // this seat. If a client connects straight to the socket (e.g. after
-        // recovering a session) we register them here instead of rejecting.
-        const cleanUsername = String(username || "").trim();
-        if (!cleanUsername) {
-          throw new AppError(
-            ERROR_CODES.USERNAME_REQUIRED,
-            "Username is required to join.",
-            400,
-          );
-        }
-        if (room.isUsernameTaken(cleanUsername, userId)) {
-          throw new AppError(
-            ERROR_CODES.USERNAME_TAKEN,
-            `"${cleanUsername}" is already taken in this room.`,
-            409,
-          );
-        }
-        participant = new Participant({ id: userId, username: cleanUsername, role: ROLES.PARTICIPANT });
+        if (room.isFull()) throw new AppError(ERROR_CODES.ROOM_FULL, "This room is full.", 409);
+        participant = new Participant({
+          id: principal.id,
+          username: room.uniqueName(principal.displayName),
+          role: principal.id === room.hostId ? ROLES.HOST : ROLES.PARTICIPANT, // host is decided by SERVER state
+          kind: principal.kind,
+        });
         room.addParticipant(participant);
       }
 
-      roomManager.cancelEmptyRoomCleanup(id);
+      // The room owner always (re)gains host on joining, e.g. after a refresh or a long absence.
+      let hostRestored = false;
+      if (principal.id === room.ownerId && room.hostId !== principal.id) {
+        room.restoreOwner(participant);
+        hostRestored = true;
+      }
+      if (principal.id === room.hostId) room.clearHostGraceTimer();
 
+      roomManager.cancelEmptyRoomCleanup(id);
       participant.attachSocket(socket.id);
       socket.data.roomId = id;
-      socket.data.userId = userId;
       socket.join(id);
 
-      // Snapshot to the joiner only.
-      socket.emit(SERVER_EVENTS.ROOM_STATE, {
-        ...room.toPublicState(),
-        you: participant.toPublic(),
-      });
+      socket.emit(SERVER_EVENTS.ROOM_STATE, { ...room.toPublicState(), you: participant.toPublic() });
+      io.to(id).emit(SERVER_EVENTS.USER_JOINED, { participant: participant.toPublic(), participants: room.publicRoster() });
+      if (hostRestored) announceHostChange(io, room);
 
-      // Let everyone else (and this socket, for a consistent roster) know.
-      io.to(id).emit(SERVER_EVENTS.USER_JOINED, {
-        participant: participant.toPublic(),
-        participants: room.listParticipants().map((p) => p.toPublic()),
-      });
+      logger.info(`${participant.kind} joined room ${id}`);
+    },
+    { bucket: "join" },
+  );
 
-      logger.info(`${participant.username} (${userId}) joined room ${id}`);
-    } catch (err) {
-      emitError(socket, err);
-    }
-  });
-
-  socket.on("leave_room", () => {
+  onSignal(socket, "leave_room", () => {
     const { roomId, userId } = socket.data;
     if (!roomId || !userId) return;
     const room = roomManager.getRoom(roomId);
@@ -122,7 +120,6 @@ export function registerRoomHandlers(io, socket) {
     departParticipant(io, room, userId, { reasonEvent: SERVER_EVENTS.USER_LEFT });
     socket.leave(roomId);
     socket.data.roomId = null;
-    socket.data.userId = null;
   });
 
   socket.on("disconnect", () => {
@@ -132,31 +129,19 @@ export function registerRoomHandlers(io, socket) {
     if (!room) return;
 
     const participant = room.getParticipant(userId);
-    if (!participant || participant.socketId !== socket.id) return; // stale/replaced session
+    if (!participant || participant.socketId !== socket.id) return; // stale/replaced connection
 
     participant.markOffline();
     broadcastParticipants(io, room);
 
-    // If the host just went offline, hand control to someone else right away
-    // instead of leaving playback stuck for the whole grace period.
-    if (room.hostId === userId) {
-      const next = room.pickNextHost(userId);
-      if (next) {
-        room.setHost(next.id);
-        io.to(room.roomId).emit(SERVER_EVENTS.HOST_CHANGED, {
-          hostId: next.id,
-          participants: room.listParticipants().map((p) => p.toPublic()),
-        });
-      }
-    }
+    if (room.hostId === userId) scheduleHostFailover(io, room, userId);
 
     participant.disconnectTimer = setTimeout(() => {
       const stillThere = room.getParticipant(userId);
-      if (stillThere && !stillThere.online) {
-        departParticipant(io, room, userId, { reasonEvent: SERVER_EVENTS.USER_LEFT });
-      }
-    }, config.disconnectGraceMs);
-
-    logger.info(`${participant.username} (${userId}) disconnected from room ${roomId}`);
+      if (stillThere && !stillThere.online) departParticipant(io, room, userId, { reasonEvent: SERVER_EVENTS.USER_LEFT });
+    }, config.rooms.disconnectGraceMs);
+    participant.disconnectTimer.unref?.();
   });
 }
+
+export { emitError };

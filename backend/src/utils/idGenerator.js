@@ -1,28 +1,17 @@
-import { v4 as uuidv4 } from "uuid";
+import { randomInt, randomUUID } from "node:crypto";
 
 const ROOM_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid confusion
 
-/**
- * Generates a 6-character room code, e.g. "K3F9QZ".
- * Mirrors the shape produced by the frontend's own generateRoomCode() helper
- * (utils/youtube.js) so codes look consistent whichever side minted them.
- */
+/** 6-character room code from a CSPRNG (e.g. "K3F9QZ"). */
 export function generateRoomCode(length = 6) {
   let code = "";
-  for (let i = 0; i < length; i++) {
-    code += ROOM_CODE_CHARS[Math.floor(Math.random() * ROOM_CODE_CHARS.length)];
-  }
+  for (let i = 0; i < length; i++) code += ROOM_CODE_CHARS[randomInt(ROOM_CODE_CHARS.length)];
   return code;
 }
 
-export function generateUserId() {
-  return uuidv4();
-}
-
-export function generateMessageId() {
-  return uuidv4();
-}
+export const generateUserId = () => randomUUID();
+export const generateMessageId = () => randomUUID();
 
 export function normalizeRoomId(roomId) {
-  return String(roomId || "").trim().toUpperCase();
+  return String(roomId || "").trim().toUpperCase().slice(0, 16);
 }

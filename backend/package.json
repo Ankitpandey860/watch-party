@@ -1,21 +1,30 @@
 {
   "name": "watch-party-backend",
   "version": "1.0.0",
-  "description": "Backend for Watchly — a YouTube watch party app. Express + Socket.IO, fully in-memory, no auth, no database.",
+  "description": "Backend for Watch Party: Express + Socket.IO. Rooms are in memory; users, sessions and OTPs live in Postgres.",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "migrate": "node scripts/migrate.js",
+    "test": "node --test",
+    "test:watch": "node --test --watch"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "socket.io": "^4.7.5",
-    "uuid": "^9.0.1"
+    "jose": "^6.2.12",
+    "nodemailer": "^10.0.16",
+    "pg": "^8.23.1",
+    "socket.io": "^4.7.5"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "socket.io-client": "^4.8.4"
   }
 }

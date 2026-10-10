@@ -28,9 +28,7 @@ export const Input = forwardRef(function Input(
         )}
         {...rest}
       />
-      {hint && !error && (
-        <p className="mt-1.5 text-xs text-muted-foreground">{hint}</p>
-      )}
+      {hint && !error && <p className="mt-1.5 text-xs text-muted-foreground">{hint}</p>}
       {error && <p className="mt-1.5 text-xs text-destructive">{error}</p>}
     </div>
   );

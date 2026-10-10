@@ -1,14 +1,15 @@
 import { PLAYBACK_ROLES, MANAGEMENT_ROLES, ROLES } from "../constants/roles.js";
 import { AppError, ERROR_CODES } from "../constants/errors.js";
 
+/**
+ * Permission checks. Roles are read from SERVER-SIDE room state (the Participant object),
+ * never from anything the client sends.
+ */
+
 /** Throws if `participant` isn't allowed to control playback (play/pause/seek/change_video). */
 export function assertCanControlPlayback(participant) {
   if (!participant || !PLAYBACK_ROLES.includes(participant.role)) {
-    throw new AppError(
-      ERROR_CODES.NOT_AUTHORIZED,
-      "Only the host and moderators can control playback.",
-      403,
-    );
+    throw new AppError(ERROR_CODES.NOT_AUTHORIZED, "Only the host and moderators can control playback.", 403);
   }
 }
 
@@ -20,8 +21,13 @@ export function assertIsHost(participant) {
 }
 
 export function assertNotSelf(actorId, targetId, message = "You can't do that to yourself.") {
-  if (actorId === targetId) {
-    throw new AppError(ERROR_CODES.CANNOT_ACT_ON_SELF, message, 400);
+  if (actorId === targetId) throw new AppError(ERROR_CODES.CANNOT_ACT_ON_SELF, message, 400);
+}
+
+/** Guests (invite-link identities) can watch and chat but never hold elevated roles. */
+export function assertCanHoldElevatedRole(target) {
+  if (target.kind !== "user") {
+    throw new AppError(ERROR_CODES.NOT_AUTHORIZED, "Guests can't be moderators or host. Ask them to sign in first.", 403);
   }
 }
 

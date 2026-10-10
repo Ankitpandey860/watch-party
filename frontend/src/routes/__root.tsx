@@ -11,6 +11,7 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { AuthProvider } from "../context/AuthContext";
 import { RoomProvider } from "../context/RoomContext";
 import { Toaster } from "../components/ui/sonner";
 
@@ -130,15 +131,17 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       {/*
-        RoomProvider lives here (not per-route) so identity/session state set on
+        AuthProvider/RoomProvider live here (not per-route) so session/room state set on
         the home page (username, roomId, userId, role) survives the client-side
         navigation to /room/$roomId instead of resetting to defaults.
       */}
-      <RoomProvider>
-        {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-        <Outlet />
-        <Toaster richColors position="top-center" />
-      </RoomProvider>
+      <AuthProvider>
+        <RoomProvider>
+          {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+          <Outlet />
+          <Toaster richColors position="top-center" />
+        </RoomProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

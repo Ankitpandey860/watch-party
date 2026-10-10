@@ -1,18 +1,13 @@
 import { cn } from "../../utils/cn";
 
 const variants = {
-  primary:
-    "gradient-hero text-white shadow-glow hover:brightness-110 focus:ring-primary",
-  secondary:
-    "bg-secondary text-secondary-foreground hover:bg-secondary/80 focus:ring-secondary",
-  ghost:
-    "bg-transparent text-foreground hover:bg-white/5 focus:ring-white/20",
+  primary: "gradient-hero text-white shadow-glow hover:brightness-110 focus:ring-primary",
+  secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 focus:ring-secondary",
+  ghost: "bg-transparent text-foreground hover:bg-white/5 focus:ring-white/20",
   outline:
     "border border-white/15 bg-white/[0.02] text-foreground hover:bg-white/[0.06] focus:ring-white/20",
-  danger:
-    "bg-destructive text-destructive-foreground hover:brightness-110 focus:ring-destructive",
-  glass:
-    "glass text-foreground hover:bg-white/[0.08] focus:ring-white/20",
+  danger: "bg-destructive text-destructive-foreground hover:brightness-110 focus:ring-destructive",
+  glass: "glass text-foreground hover:bg-white/[0.08] focus:ring-white/20",
 };
 
 const sizes = {

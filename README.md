@@ -1,306 +1,49 @@
 # 🎬 Watch Party
 
-A real-time Watch Party application that allows multiple users to watch YouTube videos together in synchronized playback. The application supports room-based collaboration, live chat, host controls, participant management, and seamless synchronization using WebSockets.
+Watch YouTube together in real time: synchronized play/pause/seek, live chat, host and moderator controls, and an
+interactive 3D (Three.js) interface. Accounts sign in with **Google** or an **e-mail one-time code**; friends join through
+an **invite link with just a display name** (guest). Roles are decided by the server, never the client.
 
----
+Docs: [ARCHITECTURE.md](ARCHITECTURE.md) · [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/PHASE0_BASELINE.md](docs/PHASE0_BASELINE.md)
 
-## 🚀 Live Demo
-
-### Frontend
-> https://watch-party-lyart-ten.vercel.app/
-
-### Backend
-> https://watch-party-dv20.onrender.com
-
----
-
-## ✨ Features
-
-### 👥 Room Management
-- Create a new watch room
-- Join existing rooms using Room ID
-- Automatic room cleanup
-- Disconnect grace period
-- Automatic host transfer when the current host leaves
-
-### 🎥 Video Synchronization
-- Shared YouTube video playback
-- Play / Pause synchronization
-- Seek synchronization
-- Real-time playback state updates
-- New participants receive the latest playback state instantly
-
-### 💬 Live Chat
-- Real-time messaging
-- Username-based chat
-- Message validation
-- Instant broadcasting using Socket.IO
-
-### 👤 Participant Management
-- Live participant list
-- Online / Offline tracking
-- Host and Participant roles
-- Automatic participant updates
-
-### ⚡ Real-time Communication
-- WebSocket powered communication
-- Low latency synchronization
-- Event-based architecture
-
----
-
-# 🛠 Tech Stack
-
-## Frontend
-
-- React.js
-- Vite
-- Tailwind CSS
-- Socket.IO Client
-- Axios
-
-## Backend
-
-- Node.js
-- Express.js
-- Socket.IO
-- REST API
-
-## Deployment
-
-- Vercel (Frontend)
-- Render (Backend)
-
-## Load Testing
-
-- Artillery
-
----
-
-# 📂 Project Structure
-
-```
-Watch-Party
-│
-├── frontend
-│   ├── src
-│   ├── components
-│   ├── pages
-│   └── context
-│
-├── backend
-│   ├── controllers
-│   ├── services
-│   ├── models
-│   ├── routes
-│   ├── sockets
-│   ├── utils
-│   └── config
-│
-└── load-test
-```
-
----
-
-# 🔄 Application Flow
-
-```
-User
-
-↓
-
-Create Room
-
-↓
-
-REST API
-
-↓
-
-Room Created
-
-↓
-
-Join Room
-
-↓
-
-Socket Connection
-
-↓
-
-Room State
-
-↓
-
-Live Chat
-
-↓
-
-Video Synchronization
-
-↓
-
-Participant Updates
-
-↓
-
-Disconnect
-```
-
----
-
-# ⚙️ Installation
-
-## Clone Repository
-
+## Quick start (local, no external services)
+Requires Node 20+.
 ```bash
-git clone https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git
+# terminal 1: backend (embedded Postgres, no setup)
+cd backend && npm ci && cp .env.example .env && npm run dev     # http://localhost:4000
+
+# terminal 2: frontend
+cd frontend && npm ci && npm run dev                            # http://localhost:5173
 ```
+`backend/.env.example` defaults to `DATABASE_URL=pglite://./.data/dev` (embedded, self-migrating). Without SMTP settings
+e-mail sign-in is unavailable; without Google settings Google sign-in is unavailable. Guests can always join by invite link,
+but creating a room needs an account, so configure at least one sign-in method (SMTP is the quickest: e.g. a free Brevo or
+Mailpit/MailHog server on localhost:1025 with `SMTP_HOST=localhost SMTP_PORT=1025 SMTP_FROM=dev@localhost`).
 
-## Install Dependencies
+### Real Postgres / Neon
+Set `DATABASE_URL` to a Postgres connection string, then `npm run migrate` in `backend/`.
 
-### Frontend
+### Google OAuth / SMTP
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) §4–5 and `backend/.env.example` (placeholders only: never commit real values).
 
-```bash
-cd frontend
-npm install
-```
+## Commands
+| Where | Command | What |
+|---|---|---|
+| backend | `npm test` | 198 tests (node:test; embedded Postgres; set `TEST_DATABASE_URL` to also run against real Postgres) |
+| backend | `npm run migrate` | apply SQL migrations |
+| frontend | `npm test` | 260 tests (Vitest) |
+| frontend | `npm run lint` / `npm run build` | ESLint / production build |
+| root | `node scripts/verify-deployment.mjs <frontend> <backend>` | verify a live deployment |
 
-### Backend
+## Security overview
+HttpOnly opaque session cookies (hash stored), rotation and revocation; CSRF guard + CORS allow-list; one-time room-bound
+socket tickets; server-authoritative roles; guests can never host/moderate; bans enforced on join; strict payload
+validation and per-event rate limits; OTP codes HMAC-stored, single-use and attempt-limited; Google ID tokens verified
+server-side; no secrets in the repo. Details in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-```bash
-cd backend
-npm install
-```
-
----
-
-# ▶️ Run Locally
-
-## Backend
-
-```bash
-npm run dev
-```
-
-## Frontend
-
-```bash
-npm run dev
-```
-
----
-
-# 🔑 Environment Variables
-
-## Backend (.env)
-
-```env
-PORT=4000
-
-CLIENT_URL=http://localhost:5173
-```
-
----
-
-## Frontend (.env)
-
-```env
-VITE_API_BASE_URL=http://localhost:4000/api
-
-VITE_SOCKET_URL=http://localhost:4000
-```
-
----
-
-# 📡 REST APIs
-
-| Method | Endpoint | Description |
-|---------|----------|-------------|
-| POST | /api/rooms | Create Room |
-| POST | /api/rooms/:roomId/join | Join Room |
-| GET | /api/rooms/:roomId | Get Room Details |
-| GET | /api/health | Health Check |
-
----
-
-# 🔌 Socket Events
-
-## Client Events
-
-- join_room
-- leave_room
-- send_message
-- play
-- pause
-- seek
-- change_video
-- time_sync
-
----
-
-## Server Events
-
-- room_state
-- sync_state
-- user_joined
-- user_left
-- participants_updated
-- host_changed
-- new_message
-- error_event
-
----
-
-# 🧪 Load Testing
-
-Load testing was performed using **Artillery**.
-
-### Test Configuration
-
-- Pre-created Rooms: **100**
-- Total Virtual Users: **7800**
-- Failed Users: **0**
-- Average Session Duration: **7.5 seconds**
-
-The application successfully handled all simulated users without failures while maintaining stable WebSocket connections.
-
----
-
-# 📸 Screenshots
-
-Add screenshots of:
-
-- Home Page
-- Create Room
-- Join Room
-- Chat
-- Watch Party
-- Load Testing Result
-
----
-
-# 📹 Demo
-
-(Optional)
-
-Include a short demonstration video showing:
-
-- Room Creation
-- Joining Room
-- Video Synchronization
-- Live Chat
-- Host Transfer
-
----
-
-# 👨‍💻 Author
-
-**Ankit Pandey**
-
-GitHub:
-https://github.com/Ankitpandey860
-
-LinkedIn:
-https://www.linkedin.com/in/ankit-pandey-042116325/
+## Known limitations
+* Single backend instance: rooms, socket tickets and rate limits live in memory; a restart drops rooms.
+* Render/Neon free tiers cold-start (about a minute / a few seconds).
+* Only YouTube is supported. Other platforms are not integrated (no permitted mechanism has been verified).
+* Live Google, SMTP, Vercel-rewrite and real-device 3D performance have not been verified (tests use mocks/simulations).
+* Lockfiles: see DEPLOYMENT.md §3 (Vercel's install command is still to be confirmed).

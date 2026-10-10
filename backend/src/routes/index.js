@@ -1,13 +1,26 @@
 import { Router } from "express";
-import roomRoutes from "./roomRoutes.js";
-import { roomManager } from "../services/roomManager.js";
+import { createAuthRoutes } from "./authRoutes.js";
+import { createRoomRoutes } from "./roomRoutes.js";
+import { attachPrincipal } from "../middlewares/auth.js";
 
-const router = Router();
+export function createApiRouter(ctx) {
+  const router = Router();
 
-router.get("/health", (req, res) => {
-  res.json({ status: "ok", uptime: process.uptime(), ...roomManager.stats() });
-});
+  // Liveness: no database, minimal output (suitable as the Render health-check path).
+  router.get("/health", (_req, res) => res.json({ status: "ok", uptime: Math.round(process.uptime()) }));
 
-router.use("/rooms", roomRoutes);
+  // Readiness: confirms the database answers (may wake a suspended Neon compute).
+  router.get("/ready", async (_req, res) => {
+    try {
+      await ctx.db.query("SELECT 1");
+      res.json({ status: "ready" });
+    } catch {
+      res.status(503).json({ status: "database_unavailable" });
+    }
+  });
 
-export default router;
+  router.use(attachPrincipal(ctx));
+  router.use("/auth", createAuthRoutes(ctx));
+  router.use("/rooms", createRoomRoutes(ctx));
+  return router;
+}

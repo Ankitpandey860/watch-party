@@ -1,69 +1,85 @@
 import { ROLES } from "../constants/roles.js";
 
-// How many chat messages we keep in memory per room. Older messages are
-// dropped as new ones arrive — this is a live watch-party chat, not a
-// persisted history.
+// How many chat messages we keep in memory per room (a live chat, not a persisted history).
 const MAX_STORED_MESSAGES = 100;
 
 export class Room {
   /**
    * @param {string} roomId
-   * @param {string} hostUserId - userId of the participant who created the room
+   * @param {string} ownerId - the authenticated user who created the room (always a "user", never a guest)
+   * @param {{ maxParticipants?: number }} [opts]
    */
-  constructor(roomId, hostUserId) {
+  constructor(roomId, ownerId, { maxParticipants = 30 } = {}) {
     this.roomId = roomId;
-    this.hostId = hostUserId;
+    this.ownerId = ownerId; // permanent host entitlement; changes only via transfer_host
+    this.hostId = ownerId; // current host (an "acting host" while the owner is away)
+    this.maxParticipants = maxParticipants;
     this.createdAt = Date.now();
+    this.lastActiveAt = Date.now();
 
-    /** @type {Map<string, import("./Participant.js").Participant>} keyed by userId */
+    /** @type {Map<string, import("./Participant.js").Participant>} keyed by principal id */
     this.participants = new Map();
-
-    // In-memory chat history, oldest first, capped at MAX_STORED_MESSAGES.
-    /** @type {Array<{id: string, senderId: string, senderName: string, role: string, message: string, timestamp: number}>} */
+    /** Principal ids that were removed by the host and may not come back. */
+    this.bans = new Set();
     this.messages = [];
 
-    // Single source of truth for playback — the frontend Player never talks to
-    // YouTube directly; it just mirrors this.
-    this.currentVideo = {
-      videoId: null,
-      playing: false,
-      currentTime: 0,
-      updatedAt: Date.now(),
-      seq: 0,
-    };
+    // Single source of truth for playback; clients only mirror this.
+    this.currentVideo = { provider: null, videoId: null, playing: false, currentTime: 0, updatedAt: Date.now(), seq: 0 };
+    this.lastTimeSyncAt = 0;
 
-    this.emptyRoomTimer = null; // grace-period deletion timer, set once participants hits 0
+    this.emptyRoomTimer = null;
+    this.hostGraceTimer = null;
+    this.actingHost = null; // { id, previousRole } while someone covers for an absent owner
+  }
+
+  touch() {
+    this.lastActiveAt = Date.now();
   }
 
   addParticipant(participant) {
     this.participants.set(participant.id, participant);
+    this.touch();
   }
 
-  getParticipant(userId) {
-    return this.participants.get(userId) || null;
+  getParticipant(id) {
+    return this.participants.get(id) || null;
   }
 
-  removeParticipant(userId) {
-    const p = this.participants.get(userId);
+  removeParticipant(id) {
+    const p = this.participants.get(id);
     if (p) p.clearDisconnectTimer();
-    this.participants.delete(userId);
+    this.participants.delete(id);
+    this.touch();
+  }
+
+  isBanned(id) {
+    return this.bans.has(id);
+  }
+
+  ban(id) {
+    this.bans.add(id);
+  }
+
+  isFull() {
+    return this.participants.size >= this.maxParticipants;
+  }
+
+  /** A display name unique within the room (case-insensitive): "Sam", then "Sam (2)", "Sam (3)"... */
+  uniqueName(name, forId = null) {
+    const taken = new Set(
+      this.listParticipants().filter((p) => p.id !== forId).map((p) => p.username.trim().toLowerCase()),
+    );
+    if (!taken.has(name.toLowerCase())) return name;
+    for (let n = 2; n < 1000; n++) {
+      const candidate = `${name.slice(0, 20 - String(n).length - 3)} (${n})`;
+      if (!taken.has(candidate.toLowerCase())) return candidate;
+    }
+    return `${name.slice(0, 12)} (${Date.now() % 1000})`;
   }
 
   findBySocketId(socketId) {
-    for (const p of this.participants.values()) {
-      if (p.socketId === socketId) return p;
-    }
+    for (const p of this.participants.values()) if (p.socketId === socketId) return p;
     return null;
-  }
-
-  /** Case-insensitive username collision check, ignoring a given userId (for reconnects). */
-  isUsernameTaken(username, ignoreUserId = null) {
-    const target = username.trim().toLowerCase();
-    for (const p of this.participants.values()) {
-      if (p.id === ignoreUserId) continue;
-      if (p.username.trim().toLowerCase() === target) return true;
-    }
-    return false;
   }
 
   listParticipants() {
@@ -74,75 +90,90 @@ export class Room {
     return this.listParticipants().filter((p) => p.online);
   }
 
+  publicRoster() {
+    return this.listParticipants().map((p) => p.toPublic());
+  }
+
   get hostParticipant() {
     return this.getParticipant(this.hostId);
   }
 
-  /** Promotes `userId` to host, demotes the previous host to moderator. Returns { previousHostId }. */
-  setHost(userId) {
-    const previousHostId = this.hostId;
-    const prev = this.getParticipant(previousHostId);
+  /** Explicit hand-over (transfer_host): `userId` becomes host AND owner; the old host becomes moderator. */
+  transferHost(userId) {
+    const prev = this.getParticipant(this.hostId);
     if (prev && prev.id !== userId) prev.role = ROLES.MODERATOR;
-
     const next = this.getParticipant(userId);
     if (next) next.role = ROLES.HOST;
     this.hostId = userId;
-
-    return { previousHostId };
+    this.ownerId = userId;
+    this.actingHost = null;
   }
 
-  /** Picks the best candidate to auto-promote when the host disconnects/leaves. */
-  pickNextHost(excludeUserId) {
-    const candidates = this.listParticipants().filter(
-      (p) => p.id !== excludeUserId && p.online,
-    );
+  /** Temporarily promotes `participant` while the owner is away; remembers their previous role. */
+  promoteActingHost(participant) {
+    const prev = this.getParticipant(this.hostId);
+    if (prev && prev.id !== participant.id) prev.role = ROLES.MODERATOR;
+    this.actingHost = { id: participant.id, previousRole: participant.role };
+    participant.role = ROLES.HOST;
+    this.hostId = participant.id;
+  }
+
+  /** The owner is back: they become host again and the acting host returns to their previous role. */
+  restoreOwner(owner) {
+    if (this.actingHost) {
+      const acting = this.getParticipant(this.actingHost.id);
+      if (acting && acting.id !== owner.id) acting.role = this.actingHost.previousRole;
+      this.actingHost = null;
+    }
+    const current = this.getParticipant(this.hostId);
+    if (current && current.id !== owner.id && current.role === ROLES.HOST) current.role = ROLES.MODERATOR;
+    owner.role = ROLES.HOST;
+    this.hostId = owner.id;
+  }
+
+  /** Best candidate to cover for an absent host: online SIGNED-IN users only (guests can never host). */
+  pickNextHost(excludeId) {
+    const candidates = this.listParticipants().filter((p) => p.id !== excludeId && p.online && p.kind === "user");
     if (candidates.length === 0) return null;
-    // Prefer an existing moderator, then whoever joined earliest.
     candidates.sort((a, b) => {
       const rank = (p) => (p.role === ROLES.MODERATOR ? 0 : 1);
-      const r = rank(a) - rank(b);
-      if (r !== 0) return r;
-      return a.joinedAt - b.joinedAt;
+      return rank(a) - rank(b) || a.joinedAt - b.joinedAt;
     });
     return candidates[0];
   }
 
+  /**
+   * Applies a playback change. Every update gets a strictly-increasing `seq` so clients can drop
+   * stale events. Before any change, the position is advanced to "now" if the video was playing:
+   * pausing therefore freezes the REAL position instead of the last reported one.
+   */
   updatePlayback(patch) {
-    // Every update — whether a discrete play/pause/seek/change_video command
-    // or a periodic time_sync ping — gets a fresh, strictly-increasing seq.
-    // Clients use this to discard a stale event that arrives after a newer
-    // one (e.g. reordered over an HTTP long-polling fallback), instead of
-    // letting the older event clobber more current playback state.
-    const seq = this.currentVideo.seq + 1;
-    this.currentVideo = { ...this.currentVideo, ...patch, updatedAt: Date.now(), seq };
+    const projected = this.getEffectivePlayback().currentTime;
+    this.currentVideo = {
+      ...this.currentVideo,
+      currentTime: projected,
+      ...patch,
+      updatedAt: Date.now(),
+      seq: this.currentVideo.seq + 1,
+    };
+    this.touch();
     return this.currentVideo;
   }
 
-  /**
-   * Returns the current playback position projected forward to "now" when
-   * playing, instead of the last value we happened to store. `currentTime` is
-   * only ever written on an explicit seek/change_video or a periodic
-   * time_sync ping, so without this a client that rejoins mid-playback (Bug 2)
-   * would see whatever stale timestamp was last recorded rather than where
-   * the video actually is right now.
-   */
+  /** Current playback position projected forward to now while playing. */
   getEffectivePlayback() {
     const cv = this.currentVideo;
     if (!cv.playing) return { ...cv };
-    const elapsedSeconds = Math.max(0, (Date.now() - cv.updatedAt) / 1000);
-    return { ...cv, currentTime: cv.currentTime + elapsedSeconds };
+    return { ...cv, currentTime: cv.currentTime + Math.max(0, (Date.now() - cv.updatedAt) / 1000) };
   }
 
-  /** Appends a chat message, dropping the oldest once we're over the cap. */
   addMessage(message) {
     this.messages.push(message);
-    if (this.messages.length > MAX_STORED_MESSAGES) {
-      this.messages.splice(0, this.messages.length - MAX_STORED_MESSAGES);
-    }
+    if (this.messages.length > MAX_STORED_MESSAGES) this.messages.splice(0, this.messages.length - MAX_STORED_MESSAGES);
+    this.touch();
     return message;
   }
 
-  /** The stored chat history (oldest first), capped at MAX_STORED_MESSAGES. */
   getMessages() {
     return this.messages;
   }
@@ -158,13 +189,26 @@ export class Room {
     }
   }
 
-  /** Full snapshot sent to a client right after it joins (ROOM_STATE event). */
+  clearHostGraceTimer() {
+    if (this.hostGraceTimer) {
+      clearTimeout(this.hostGraceTimer);
+      this.hostGraceTimer = null;
+    }
+  }
+
+  /** Clears every timer owned by the room and its participants (called when the room is deleted). */
+  dispose() {
+    this.clearEmptyRoomTimer();
+    this.clearHostGraceTimer();
+    for (const p of this.participants.values()) p.clearDisconnectTimer();
+  }
+
   toPublicState() {
     return {
       roomId: this.roomId,
       hostId: this.hostId,
       currentVideo: this.getEffectivePlayback(),
-      participants: this.listParticipants().map((p) => p.toPublic()),
+      participants: this.publicRoster(),
       messages: this.getMessages(),
     };
   }

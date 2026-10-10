@@ -68,7 +68,7 @@ const YT_STATE = { PLAYING: 1, PAUSED: 2 };
 //    and ignore these echoes. No time-based suppression window is needed.
 // Native YouTube controls are disabled (`controls: 0`) so scrubbing/volume/
 // fullscreen etc. still only happen through our own Controls component.
-export function Player({ videoUrl, playing }) {
+export function Player({ videoUrl, playing, providerLabel = "YouTube" }) {
   const { playback, syncSeq, driftSeq, role, updatePlayback, play, pause, syncTime } = useRoom();
   const videoId = extractYouTubeId(videoUrl);
   const canControl = role === "host" || role === "moderator";
@@ -201,44 +201,51 @@ export function Player({ videoUrl, playing }) {
   // Fires for every play/pause/buffer/etc. transition, whether it came from
   // our own applyToPlayer() calls (an authoritative sync being applied) or
   // the user clicking directly on the embedded video.
-  const handleStateChange = useCallback((event) => {
-    const state = event.data;
-    if (state !== YT_STATE.PLAYING && state !== YT_STATE.PAUSED) return;
+  const handleStateChange = useCallback(
+    (event) => {
+      const state = event.data;
+      if (state !== YT_STATE.PLAYING && state !== YT_STATE.PAUSED) return;
 
-    const { playback: currentPlayback, play: doPlay, pause: doPause, canControl: currentCanControl } =
-      latestRef.current;
-    const isPlaying = state === YT_STATE.PLAYING;
+      const {
+        playback: currentPlayback,
+        play: doPlay,
+        pause: doPause,
+        canControl: currentCanControl,
+      } = latestRef.current;
+      const isPlaying = state === YT_STATE.PLAYING;
 
-    // Already matches what the server last told us. This covers every echo
-    // of our own applyToPlayer() calls (buffering blips from a seek, a
-    // playVideo()/pauseVideo() call that just confirms the state we already
-    // have) without needing a time-based suppression window: applyToPlayer
-    // always brings the player in line with `currentPlayback` first, so any
-    // event it causes will match `currentPlayback` by the time it fires.
-    if (currentPlayback.playing === isPlaying) return;
+      // Already matches what the server last told us. This covers every echo
+      // of our own applyToPlayer() calls (buffering blips from a seek, a
+      // playVideo()/pauseVideo() call that just confirms the state we already
+      // have) without needing a time-based suppression window: applyToPlayer
+      // always brings the player in line with `currentPlayback` first, so any
+      // event it causes will match `currentPlayback` by the time it fires.
+      if (currentPlayback.playing === isPlaying) return;
 
-    const player = playerInstanceRef.current;
+      const player = playerInstanceRef.current;
 
-    if (!currentCanControl) {
-      // A participant without playback permission clicked the embedded
-      // video. The iframe already toggled its own state locally (inherent
-      // to clicking inside the YouTube canvas, can't be prevented), but our
-      // app must not treat it as a command: don't touch RoomContext, don't
-      // emit play/pause — just snap the real player back to the last
-      // authoritative state.
-      if (player) applyToPlayer(player, currentPlayback.currentTime, currentPlayback.playing);
-      return;
-    }
+      if (!currentCanControl) {
+        // A participant without playback permission clicked the embedded
+        // video. The iframe already toggled its own state locally (inherent
+        // to clicking inside the YouTube canvas, can't be prevented), but our
+        // app must not treat it as a command: don't touch RoomContext, don't
+        // emit play/pause — just snap the real player back to the last
+        // authoritative state.
+        if (player) applyToPlayer(player, currentPlayback.currentTime, currentPlayback.playing);
+        return;
+      }
 
-    // A host/moderator toggled the video directly. Only emit the socket
-    // event, the same one Controls' Play/Pause button uses — never update
-    // RoomContext here. The server remains the only source of truth: it
-    // will broadcast sync_state back to everyone, including us, and that
-    // broadcast (via the syncSeq effect above) is what will actually change
-    // what's visible.
-    if (isPlaying) doPlay();
-    else doPause();
-  }, [applyToPlayer]);
+      // A host/moderator toggled the video directly. Only emit the socket
+      // event, the same one Controls' Play/Pause button uses — never update
+      // RoomContext here. The server remains the only source of truth: it
+      // will broadcast sync_state back to everyone, including us, and that
+      // broadcast (via the syncSeq effect above) is what will actually change
+      // what's visible.
+      if (isPlaying) doPlay();
+      else doPause();
+    },
+    [applyToPlayer],
+  );
 
   const handleReady = useCallback(
     (event) => {
@@ -298,7 +305,7 @@ export function Player({ videoUrl, playing }) {
               <Badge tone={playing ? "playing" : "paused"} dot>
                 {playing ? "Playing" : "Paused"}
               </Badge>
-              <Badge tone="neutral">YouTube</Badge>
+              <Badge tone="neutral">{providerLabel}</Badge>
             </div>
           </div>
         ) : (

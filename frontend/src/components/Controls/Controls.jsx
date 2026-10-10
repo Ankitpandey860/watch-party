@@ -1,9 +1,10 @@
+import { useState } from "react";
 import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX } from "lucide-react";
 import { IconButton } from "../Buttons/IconButton";
 import { formatTime } from "../../utils/youtube";
 import { cn } from "../../utils/cn";
 
-function Slider({ value, max, onChange, disabled, className = "" }) {
+function Slider({ value, max, onChange, onCommit, disabled, label, className = "" }) {
   const pct = max > 0 ? (value / max) * 100 : 0;
   return (
     <input
@@ -13,7 +14,23 @@ function Slider({ value, max, onChange, disabled, className = "" }) {
       step={1}
       value={value}
       disabled={disabled}
+      aria-label={label}
       onChange={(e) => onChange(Number(e.target.value))}
+      // Commit once when the user lets go (pointer, finger or keyboard), not on every drag step.
+      onPointerUp={(e) => onCommit?.(Number(e.currentTarget.value))}
+      onKeyUp={(e) =>
+        [
+          "ArrowLeft",
+          "ArrowRight",
+          "ArrowUp",
+          "ArrowDown",
+          "Home",
+          "End",
+          "PageUp",
+          "PageDown",
+        ].includes(e.key) && onCommit?.(Number(e.currentTarget.value))
+      }
+      onBlur={(e) => onCommit?.(Number(e.currentTarget.value))}
       className={cn(
         "h-1.5 w-full cursor-pointer appearance-none rounded-full outline-none",
         "disabled:cursor-not-allowed disabled:opacity-50",
@@ -42,21 +59,28 @@ export function Controls({
   onVolume,
 }) {
   const muted = volume === 0;
+  // While dragging, show the thumb position locally and only tell the room when released.
+  const [dragValue, setDragValue] = useState(null);
+  const commitSeek = (t) => {
+    if (dragValue === null) return; // nothing was dragged (e.g. a plain blur)
+    setDragValue(null);
+    onSeek(t);
+  };
   return (
     <div className="rounded-2xl border border-white/10 bg-card p-4 sm:p-5">
       <div className="flex items-center gap-3">
         <span className="w-12 text-right font-mono text-xs text-muted-foreground">
-          {formatTime(currentTime)}
+          {formatTime(dragValue ?? currentTime)}
         </span>
         <Slider
-          value={currentTime}
+          label="Seek"
+          value={dragValue ?? currentTime}
           max={duration}
-          onChange={onSeek}
+          onChange={setDragValue}
+          onCommit={commitSeek}
           disabled={disabled}
         />
-        <span className="w-12 font-mono text-xs text-muted-foreground">
-          {formatTime(duration)}
-        </span>
+        <span className="w-12 font-mono text-xs text-muted-foreground">{formatTime(duration)}</span>
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-4">
@@ -101,7 +125,7 @@ export function Controls({
           >
             {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
           </IconButton>
-          <Slider value={volume} max={100} onChange={onVolume} />
+          <Slider label="Volume" value={volume} max={100} onChange={onVolume} />
           <span className="w-10 shrink-0 text-right font-mono text-xs text-muted-foreground">
             {volume}%
           </span>

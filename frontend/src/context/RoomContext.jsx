@@ -1,316 +1,280 @@
-import { createContext, useContext, useMemo, useState, useCallback, useRef } from "react";
-import { roomService } from "../services/roomService";
-import { socketService } from "../services/socketService";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import socketService from "../services/socketService";
+import roomService from "../services/roomService";
+import providerRegistry from "../providers";
 
+/**
+ * Live room state, mirrored from the server (the single source of truth). Identity and roles are
+ * NEVER taken from the client: `you` in the server's room_state is authoritative.
+ *
+ * connectionStatus:
+ *   idle | connecting | connected | reconnecting          (normal lifecycle)
+ *   room_not_found | room_full | banned | auth_expired | unauthorized   (terminal: UI shows a screen)
+ */
 const RoomContext = createContext(null);
 
-const SESSION_PREFIX = "watchparty:";
+const MAX_STORED_MESSAGES = 100;
+const DEFAULT_PLAYBACK = { playing: false, currentTime: 0, duration: 0, volume: 60 };
+const TERMINAL = new Set(["room_not_found", "room_full", "banned", "auth_expired", "unauthorized"]);
 
-function saveSession(roomId, session) {
-  try {
-    sessionStorage.setItem(`${SESSION_PREFIX}${roomId}`, JSON.stringify(session));
-  } catch {
-    // sessionStorage can throw in private-browsing/quota-exceeded edge cases — non-fatal.
-  }
-}
-
-function readSession(roomId) {
-  try {
-    const raw = sessionStorage.getItem(`${SESSION_PREFIX}${roomId}`);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function clearSession(roomId) {
-  try {
-    sessionStorage.removeItem(`${SESSION_PREFIX}${roomId}`);
-  } catch {
-    // ignore
-  }
-}
-
-function videoIdToUrl(videoId) {
-  return videoId ? `https://www.youtube.com/watch?v=${videoId}` : "";
-}
+// Server error code -> terminal screen (only when we are not already in the room).
+const CODE_TO_STATUS = {
+  ROOM_NOT_FOUND: "room_not_found",
+  ROOM_FULL: "room_full",
+  BANNED: "banned",
+  NOT_AUTHORIZED: "unauthorized",
+};
 
 export function RoomProvider({ children }) {
-  const [username, setUsername] = useState("");
   const [roomId, setRoomId] = useState("");
   const [userId, setUserId] = useState("");
-  const [role, setRole] = useState("participant"); // 'host' | 'moderator' | 'participant'
+  const [username, setUsername] = useState("");
+  const [role, setRole] = useState("participant");
+  const [hostId, setHostId] = useState("");
   const [participants, setParticipants] = useState([]);
-  const [videoUrl, setVideoUrl] = useState("");
-  const [playback, setPlayback] = useState({
-    playing: false,
-    currentTime: 0,
-    duration: 0, // set from the real YouTube player once it loads (see Player.jsx)
-    volume: 60,
-  });
-  // Bumped every time an *authoritative* playback update arrives from the
-  // server (room_state on join, sync_state on play/pause/seek/change_video).
-  // Player.jsx watches this (not `playback.currentTime` directly) to know
-  // when to imperatively seek/play/pause the real IFrame player — local
-  // progress-tick updates to `playback.currentTime` do NOT bump this, so they
-  // never cause a feedback loop.
-  const [syncSeq, setSyncSeq] = useState(0);
-  // Chat history for the room, oldest first. Seeded from `room_state` on
-  // join/reconnect (the server includes the last 100 messages there) and
-  // appended to as `new_message` events arrive.
   const [messages, setMessages] = useState([]);
-  // Bumped only for periodic time_sync pings (see Player.jsx) — a *soft*
-  // signal meaning "re-check drift", as opposed to syncSeq which means
-  // "apply this play/pause/seek command". Kept separate so a periodic ping
-  // never triggers a redundant playVideo()/pauseVideo() call.
-  const [driftSeq, setDriftSeq] = useState(0);
-  // Tracks the highest playback `seq` we've applied so a stale sync_state
-  // (delivered out of order, e.g. over a polling-transport fallback) can be
-  // detected and ignored instead of overwriting newer state (Bug 1).
-  const lastSeqRef = useRef(-1);
-  const [connectionStatus, setConnectionStatus] = useState("idle"); // idle|connecting|connected|error
+  const [videoUrl, setVideoUrl] = useState("");
+  const [provider, setProvider] = useState(null);
+  const [playback, setPlayback] = useState(DEFAULT_PLAYBACK);
+  const [connectionStatus, setConnectionStatus] = useState("idle");
   const [roomError, setRoomError] = useState("");
-  // Set when RoomPage redirects home due to no valid session for the room in
-  // the URL — lets JoinRoomCard pre-fill the room code the user tried to open.
-  const [joinCodePrefill, setJoinCodePrefill] = useState("");
+  const [syncSeq, setSyncSeq] = useState(0);
+  const [driftSeq, setDriftSeq] = useState(0);
 
-  // Guards against double-subscribing socket listeners (e.g. React StrictMode
-  // double-invoking effects in dev, or a fast unmount/remount).
-  const listenersBoundRef = useRef(false);
+  const lastSeqRef = useRef(-1);
+  const statusRef = useRef("idle");
+  const userIdRef = useRef("");
+  const unsubscribersRef = useRef([]);
 
-  const updatePlayback = useCallback((patch) => {
-    setPlayback((p) => ({ ...p, ...patch }));
+  const setStatus = useCallback((next) => {
+    statusRef.current = next;
+    setConnectionStatus(next);
   }, []);
 
-  // Marks the *next* playback values as an authoritative command the real
-  // player must apply (as opposed to a local progress tick).
-  const bumpSync = useCallback(() => setSyncSeq((s) => s + 1), []);
-  const bumpDrift = useCallback(() => setDriftSeq((s) => s + 1), []);
+  const bumpSync = useCallback(() => setSyncSeq((n) => n + 1), []);
+  const bumpDrift = useCallback(() => setDriftSeq((n) => n + 1), []);
 
-  const applyRoomState = useCallback((state) => {
-    setParticipants(state.participants || []);
-    setMessages(Array.isArray(state.messages) ? state.messages : []);
-    setVideoUrl(videoIdToUrl(state.currentVideo?.videoId));
-    updatePlayback({
-      playing: Boolean(state.currentVideo?.playing),
-      currentTime: state.currentVideo?.currentTime || 0,
-    });
-    if (typeof state.currentVideo?.seq === "number") {
-      lastSeqRef.current = state.currentVideo.seq;
-    }
-    bumpSync();
-    if (state.you) setRole(state.you.role);
-  }, [updatePlayback, bumpSync]);
-
-  // ---- Identity: create or join a room via REST, before ever touching the socket ----
-
-  const createRoomAndEnter = useCallback(async (name) => {
-    const result = await roomService.createRoom({ username: name });
-    setUsername(result.username);
-    setRoomId(result.roomId);
-    setUserId(result.userId);
-    setRole(result.role);
-    saveSession(result.roomId, result);
-    return result.roomId;
+  const applyVideo = useCallback((providerId, videoId) => {
+    setProvider(videoId ? providerId || "youtube" : null);
+    setVideoUrl(videoId ? providerRegistry.urlFor(providerId, videoId) : "");
   }, []);
 
-  const joinRoomAndEnter = useCallback(async (name, code) => {
-    const result = await roomService.joinRoom({ roomId: code, username: name });
-    setUsername(result.username);
-    setRoomId(result.roomId);
-    setUserId(result.userId);
-    setRole(result.role);
-    saveSession(result.roomId, result);
-    return result.roomId;
+  const clearListeners = useCallback(() => {
+    unsubscribersRef.current.forEach((off) => off());
+    unsubscribersRef.current = [];
   }, []);
 
-  /**
-   * Called when RoomPage mounts. If we already have identity in memory (the
-   * normal create/join -> navigate flow) it's a no-op; otherwise (a hard
-   * refresh landed directly on /room/:roomId) it restores userId/username/role
-   * from sessionStorage. Returns false if neither source has an identity —
-   * the caller should send the user back to the join screen.
-   */
-  const restoreSession = useCallback(
-    (paramsRoomId) => {
-      if (userId && roomId === paramsRoomId) return true;
-      const session = readSession(paramsRoomId);
-      if (!session) return false;
-      setUsername(session.username);
-      setRoomId(session.roomId);
-      setUserId(session.userId);
-      setRole(session.role);
-      return true;
-    },
-    [userId, roomId],
-  );
-
-  // ---- Socket lifecycle ----
-
-  const connectSocket = useCallback(
-    (currentRoomId, currentUserId, currentUsername) => {
-      setConnectionStatus("connecting");
-      setRoomError("");
-      socketService.connect(currentRoomId, currentUserId, currentUsername);
-
-      if (listenersBoundRef.current) return;
-      listenersBoundRef.current = true;
-
-      socketService.on("room_state", (state) => {
-        setConnectionStatus("connected");
-        applyRoomState(state);
-      });
-
-      socketService.on("participants_updated", ({ participants: list }) => {
-        setParticipants(list);
-      });
-
-      socketService.on("user_joined", ({ participants: list }) => {
-        setParticipants(list);
-      });
-
-      socketService.on("user_left", ({ participants: list }) => {
-        setParticipants(list);
-      });
-
-      socketService.on("role_assigned", ({ participants: list, userId: changedId, role: newRole }) => {
-        setParticipants(list);
-        setUserId((currentId) => {
-          if (changedId === currentId) setRole(newRole);
-          return currentId;
-        });
-      });
-
-      socketService.on("host_changed", ({ participants: list, hostId }) => {
-        setParticipants(list);
-        setUserId((currentId) => {
-          if (currentId) {
-            setRole((prevRole) => (currentId === hostId ? "host" : prevRole === "host" ? "moderator" : prevRole));
-          }
-          return currentId;
-        });
-      });
-
-      socketService.on("participant_removed", ({ participants: list }) => {
-        setParticipants(list);
-      });
-
-      socketService.on("removed_from_room", () => {
-        setRoomError("You were removed from this room by the host.");
-        setConnectionStatus("error");
-      });
-
-      socketService.on("sync_state", ({ videoId, playing, currentTime, seq, reason }) => {
-        // Newest authoritative state always wins: a lower-or-equal seq means
-        // this event is stale (arrived out of order) and must be dropped
-        // rather than overwriting the more current state we already applied.
-        if (typeof seq === "number") {
-          if (seq <= lastSeqRef.current) return;
-          lastSeqRef.current = seq;
-        }
-
-        setVideoUrl(videoIdToUrl(videoId));
-        updatePlayback({ playing: Boolean(playing), currentTime: currentTime || 0 });
-
-        if (reason === "periodic") {
-          // Continuous-sync ping: only ask Player.jsx to re-check drift, never
-          // force a play/pause/seek — avoids jitter and feedback loops.
-          bumpDrift();
-        } else {
-          // Discrete play/pause/seek/change_video command: apply it for real.
-          bumpSync();
-        }
-      });
-
-      socketService.on("new_message", (chatMessage) => {
-        if (!chatMessage) return;
-        setMessages((prev) => {
-          const next = [...prev, chatMessage];
-          return next.length > 100 ? next.slice(next.length - 100) : next;
-        });
-      });
-
-      socketService.on("error_event", ({ message }) => {
-        setRoomError(message || "Something went wrong.");
-      });
-    },
-    [applyRoomState, updatePlayback, bumpSync, bumpDrift],
-  );
+  const resetRoomState = useCallback(() => {
+    setRoomId("");
+    setUserId("");
+    userIdRef.current = "";
+    setUsername("");
+    setRole("participant");
+    setHostId("");
+    setParticipants([]);
+    setMessages([]);
+    setVideoUrl("");
+    setProvider(null);
+    setPlayback(DEFAULT_PLAYBACK);
+    lastSeqRef.current = -1;
+    setStatus("idle");
+    setRoomError("");
+  }, [setStatus]);
 
   const disconnectSocket = useCallback(() => {
+    clearListeners();
     socketService.disconnect();
-    listenersBoundRef.current = false;
-    setConnectionStatus("idle");
-  }, []);
+  }, [clearListeners]);
+
+  /** Opens the socket for a room. `principal` is only used to label the UI until room_state arrives. */
+  const connectSocket = useCallback(
+    (targetRoomId, principal) => {
+      clearListeners();
+      setRoomId(targetRoomId);
+      if (principal) {
+        setUserId(principal.id);
+        userIdRef.current = principal.id;
+        setUsername(principal.displayName);
+      }
+      lastSeqRef.current = -1;
+      setStatus("connecting");
+      socketService.connect(targetRoomId);
+
+      const on = (event, handler) =>
+        unsubscribersRef.current.push(socketService.on(event, handler));
+      const setRoster = (data) => setParticipants(data?.participants || []);
+
+      // ---- connection lifecycle -------------------------------------------------------------
+      on("disconnect", (reason) => {
+        if (TERMINAL.has(statusRef.current) || reason === "io client disconnect") return;
+        setStatus("reconnecting");
+      });
+      on("connect_error", () => {
+        if (TERMINAL.has(statusRef.current)) return;
+        const failure = socketService.lastTicketFailure;
+        if (failure?.status === 404) return setStatus("room_not_found");
+        if (failure?.status === 403)
+          return setStatus(failure.code === "BANNED" ? "banned" : "unauthorized");
+        if (failure?.status === 401) return setStatus("auth_expired");
+        setStatus(
+          statusRef.current === "connected" || statusRef.current === "reconnecting"
+            ? "reconnecting"
+            : "connecting",
+        );
+      });
+      on("auth_expired", ({ reason } = {}) => {
+        if (reason === "rotated") {
+          // The user signed in again (new session): quietly reconnect with a fresh ticket.
+          setStatus("reconnecting");
+          setTimeout(() => socketService.reconnect(), 150);
+          return;
+        }
+        setStatus("auth_expired");
+      });
+
+      // ---- room state ---------------------------------------------------------------------------
+      on("room_state", (data) => {
+        setRoster(data);
+        setMessages(data.messages || []);
+        setHostId(data.hostId || "");
+        if (data.you) {
+          setRole(data.you.role);
+          setUserId(data.you.id);
+          userIdRef.current = data.you.id;
+          setUsername(data.you.username);
+        }
+        const cv = data.currentVideo;
+        if (cv) {
+          applyVideo(cv.provider, cv.videoId);
+          setPlayback((p) => ({ ...p, playing: cv.playing, currentTime: cv.currentTime }));
+          if (typeof cv.seq === "number") lastSeqRef.current = cv.seq;
+        }
+        setStatus("connected");
+        setRoomError("");
+        bumpSync();
+      });
+
+      on("participants_updated", setRoster);
+      on("user_joined", setRoster);
+      on("user_left", setRoster);
+      on("participant_removed", setRoster);
+
+      on("role_assigned", (data) => {
+        setRoster(data);
+        if (data.userId === userIdRef.current) setRole(data.role);
+      });
+
+      on("host_changed", (data) => {
+        setRoster(data);
+        setHostId(data.hostId || "");
+        const me = (data.participants || []).find((p) => p.id === userIdRef.current);
+        if (me) setRole(me.role); // the server's roster is authoritative
+      });
+
+      on("removed_from_room", () => {
+        setStatus("banned");
+      });
+
+      // ---- playback ---------------------------------------------------------------------------
+      on("sync_state", (data) => {
+        // Drop anything not newer than what we already applied (reordered / duplicate events).
+        if (typeof data.seq === "number") {
+          if (data.seq <= lastSeqRef.current) return;
+          lastSeqRef.current = data.seq;
+        }
+        applyVideo(data.provider, data.videoId);
+        setPlayback((p) => ({ ...p, playing: data.playing, currentTime: data.currentTime }));
+        // "periodic" pings only nudge drift; every other reason is a command to apply immediately.
+        if (data.reason === "periodic") bumpDrift();
+        else bumpSync();
+      });
+
+      on("new_message", (message) => {
+        if (!message) return;
+        setMessages((prev) => [...prev, message].slice(-MAX_STORED_MESSAGES));
+      });
+
+      on("error_event", (err) => {
+        const code = err?.code;
+        const terminal = CODE_TO_STATUS[code];
+        // Before we are in the room these mean "you can't be here"; afterwards they are just a toast.
+        if (terminal && statusRef.current !== "connected") {
+          setStatus(terminal);
+          return;
+        }
+        if (code === "RATE_LIMITED") {
+          setRoomError("You're doing that too fast. Slow down for a moment.");
+          return;
+        }
+        setRoomError(err?.message || "Something went wrong.");
+      });
+    },
+    [applyVideo, bumpDrift, bumpSync, clearListeners, setStatus],
+  );
+
+  const retryConnection = useCallback(() => {
+    if (!roomId) return;
+    connectSocket(roomId);
+  }, [roomId, connectSocket]);
 
   const leaveRoom = useCallback(() => {
     disconnectSocket();
-    if (roomId) clearSession(roomId);
-    setUsername("");
-    setRoomId("");
-    setUserId("");
-    setRole("participant");
-    setParticipants([]);
-    setVideoUrl("");
-    setPlayback({ playing: false, currentTime: 0, duration: 0, volume: 60 });
-    setMessages([]);
-    setRoomError("");
-  }, [disconnectSocket, roomId]);
+    resetRoomState();
+  }, [disconnectSocket, resetRoomState]);
 
-  // ---- Playback + management actions (server validates permissions; UI already
-  // disables controls for non-privileged roles, this is defense in depth) ----
+  useEffect(() => () => clearListeners(), [clearListeners]);
 
+  // ---- outgoing actions (event names + payload shapes are the wire contract) --------------------
   const play = useCallback(() => socketService.emit("play"), []);
   const pause = useCallback(() => socketService.emit("pause"), []);
   const seek = useCallback((time) => socketService.emit("seek", { time }), []);
-  // Lightweight periodic ping (Bug 3) — does not toggle playing state, just
-  // keeps the server's authoritative clock fresh between discrete commands.
-  const syncTime = useCallback((time) => socketService.emit("time_sync", { time }), []);
+  // Position reports carry the sequence number they were based on; the server drops stale ones.
+  const syncTime = useCallback(
+    (time) => socketService.emit("time_sync", { time, seq: lastSeqRef.current }),
+    [],
+  );
   const changeVideo = useCallback((url) => socketService.emit("change_video", { url }), []);
   const assignRole = useCallback(
-    (targetUserId, nextRole) => socketService.emit("assign_role", { userId: targetUserId, role: nextRole }),
+    (id, newRole) => socketService.emit("assign_role", { userId: id, role: newRole }),
     [],
   );
   const removeParticipant = useCallback(
-    (targetUserId) => socketService.emit("remove_participant", { userId: targetUserId }),
+    (id) => socketService.emit("remove_participant", { userId: id }),
     [],
   );
-  const transferHost = useCallback(
-    (targetUserId) => socketService.emit("transfer_host", { userId: targetUserId }),
-    [],
-  );
-  const sendMessage = useCallback(
-    (message) => socketService.emit("send_message", { message }),
-    [],
-  );
+  const transferHost = useCallback((id) => socketService.emit("transfer_host", { userId: id }), []);
+  const sendMessage = useCallback((message) => socketService.emit("send_message", { message }), []);
+
+  // Local-only playback fields (volume, duration, ticking position) that never go over the wire.
+  const updatePlayback = useCallback((patch) => setPlayback((p) => ({ ...p, ...patch })), []);
 
   const value = useMemo(
     () => ({
-      username,
-      setUsername,
       roomId,
-      setRoomId,
       userId,
+      username,
       role,
-      setRole,
+      hostId,
       participants,
-      setParticipants,
-      videoUrl,
-      setVideoUrl,
-      playback,
-      updatePlayback,
-      syncSeq,
-      driftSeq,
       messages,
+      videoUrl,
+      provider,
+      playback,
       connectionStatus,
       roomError,
+      syncSeq,
+      driftSeq,
       setRoomError,
-      joinCodePrefill,
-      setJoinCodePrefill,
-      createRoomAndEnter,
-      joinRoomAndEnter,
-      restoreSession,
       connectSocket,
+      retryConnection,
       disconnectSocket,
       leaveRoom,
       play,
@@ -322,26 +286,26 @@ export function RoomProvider({ children }) {
       removeParticipant,
       transferHost,
       sendMessage,
+      updatePlayback,
+      createRoom: roomService.createRoom,
     }),
     [
-      username,
       roomId,
       userId,
+      username,
       role,
+      hostId,
       participants,
-      videoUrl,
-      playback,
-      updatePlayback,
-      syncSeq,
-      driftSeq,
       messages,
+      videoUrl,
+      provider,
+      playback,
       connectionStatus,
       roomError,
-      joinCodePrefill,
-      createRoomAndEnter,
-      joinRoomAndEnter,
-      restoreSession,
+      syncSeq,
+      driftSeq,
       connectSocket,
+      retryConnection,
       disconnectSocket,
       leaveRoom,
       play,
@@ -353,6 +317,7 @@ export function RoomProvider({ children }) {
       removeParticipant,
       transferHost,
       sendMessage,
+      updatePlayback,
     ],
   );
 
@@ -361,6 +326,8 @@ export function RoomProvider({ children }) {
 
 export function useRoom() {
   const ctx = useContext(RoomContext);
-  if (!ctx) throw new Error("useRoom must be used within RoomProvider");
+  if (!ctx) throw new Error("useRoom must be used inside <RoomProvider>");
   return ctx;
 }
+
+export default RoomContext;
