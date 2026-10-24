@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Watch Party</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header><span class="logo" aria-hidden="true">▶</span><h1>Watch Party for Netflix</h1></header>
+
+  <section id="unpaired" hidden>
+    <p class="muted">Pair this browser with your room. In Watch Party, open the room, choose <b>Netflix</b> and press <b>Pair extension</b> to get a code.</p>
+    <label for="server">Watch Party address</label>
+    <input id="server" type="url" placeholder="https://your-watch-party.example" autocomplete="off" spellcheck="false" />
+    <label for="code">Pairing code</label>
+    <input id="code" type="text" placeholder="ABCD-EFGH" maxlength="12" autocomplete="off" spellcheck="false" />
+    <button id="pair" class="primary">Pair</button>
+    <p id="pairError" class="error" role="alert"></p>
+  </section>
+
+  <section id="paired" hidden>
+    <dl>
+      <dt>Server</dt><dd id="sServer"></dd>
+      <dt>Connection</dt><dd id="sConn"></dd>
+      <dt>Your role</dt><dd id="sRole"></dd>
+      <dt>Room title</dt><dd id="sRoom"></dd>
+      <dt>This browser</dt><dd id="sTab"></dd>
+    </dl>
+    <p id="hint" class="hint"></p>
+    <p id="err" class="error" role="alert"></p>
+    <div class="row">
+      <button id="reconnect">Reconnect</button>
+      <button id="copyDiag">Copy diagnostics</button>
+      <button id="unpair" class="danger">Disconnect</button>
+    </div>
+  </section>
+
+  <footer>Only your title id, play/pause state and position are shared. Your Netflix login, cookies and video never leave Netflix.</footer>
+  <script src="popup.js"></script>
+</body>
+</html>

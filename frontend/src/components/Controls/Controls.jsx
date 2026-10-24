@@ -57,6 +57,11 @@ export function Controls({
   onPause,
   onSeek,
   onVolume,
+  rate = 1,
+  onRate,
+  rateSupported = true,
+  rateUnsupportedReason = "Playback speed isn't available for this provider",
+  showSeekBar = true,
 }) {
   const muted = volume === 0;
   // While dragging, show the thumb position locally and only tell the room when released.
@@ -72,15 +77,25 @@ export function Controls({
         <span className="w-12 text-right font-mono text-xs text-muted-foreground">
           {formatTime(dragValue ?? currentTime)}
         </span>
-        <Slider
-          label="Seek"
-          value={dragValue ?? currentTime}
-          max={duration}
-          onChange={setDragValue}
-          onCommit={commitSeek}
-          disabled={disabled}
-        />
-        <span className="w-12 font-mono text-xs text-muted-foreground">{formatTime(duration)}</span>
+        {showSeekBar ? (
+          <>
+            <Slider
+              label="Seek"
+              value={dragValue ?? currentTime}
+              max={duration}
+              onChange={setDragValue}
+              onCommit={commitSeek}
+              disabled={disabled}
+            />
+            <span className="w-12 font-mono text-xs text-muted-foreground">
+              {formatTime(duration)}
+            </span>
+          </>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            Room position (the title's length isn't visible from here)
+          </span>
+        )}
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-4">
@@ -116,6 +131,23 @@ export function Controls({
             <SkipForward className="h-4 w-4" />
           </IconButton>
         </div>
+
+        {onRate && (
+          <select
+            aria-label="Playback speed"
+            value={rate}
+            disabled={disabled || !rateSupported}
+            title={rateSupported ? "Playback speed (everyone)" : rateUnsupportedReason}
+            onChange={(e) => onRate(Number(e.target.value))}
+            className="h-9 rounded-lg border border-white/10 bg-white/[0.04] px-2 text-xs disabled:opacity-50"
+          >
+            {[0.5, 0.75, 1, 1.25, 1.5, 2].map((r) => (
+              <option key={r} value={r}>
+                {r}×
+              </option>
+            ))}
+          </select>
+        )}
 
         <div className="flex min-w-0 flex-1 items-center gap-3 sm:max-w-xs">
           <IconButton

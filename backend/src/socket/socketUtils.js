@@ -25,7 +25,19 @@ export function playbackSnapshot(room) {
     videoId: cv.videoId,
     playing: cv.playing,
     currentTime: cv.currentTime,
+    rate: cv.rate ?? 1,
+    mediaParams: cv.mediaParams || null,
     updatedAt: cv.updatedAt,
     seq: cv.seq,
   };
+}
+
+/** Cuts off every extension (companion) socket attached to `userId` in `roomId` (they left, were removed or banned). */
+export function dropCompanions(io, roomId, userId, reason = "left_room") {
+  for (const s of io.sockets.sockets.values()) {
+    if (s.data.companion && s.data.roomId === roomId && s.data.userId === userId) {
+      s.emit(SERVER_EVENTS.COMPANION_ENDED, { reason });
+      s.disconnect(true);
+    }
+  }
 }

@@ -100,10 +100,18 @@ export function loadConfig(env = process.env) {
       ticketTtlMs: num(env.SOCKET_TICKET_TTL_SECONDS, 30) * 1000,
       maxPayloadBytes: 16 * 1024,
     }),
+    extension: Object.freeze({
+      // Empty = any chrome-extension:// / moz-extension:// origin may pair (pairing still needs a one-time
+      // code a signed-in user typed in). Production should pin the published extension's origin(s).
+      origins: list(env.EXTENSION_ORIGINS, []).map(stripSlash),
+      pairingTtlMs: num(env.EXTENSION_PAIRING_TTL_SECONDS, 120) * 1000,
+      credentialTtlMs: num(env.EXTENSION_CREDENTIAL_TTL_HOURS, 12) * 3_600_000,
+    }),
     rooms: Object.freeze({
       maxRooms: num(env.MAX_ROOMS, 200),
       maxPerUser: num(env.MAX_ROOMS_PER_USER, 5),
       maxParticipants: num(env.MAX_PARTICIPANTS_PER_ROOM, 30),
+      maxModerators: Math.max(0, Math.min(10, Math.floor(num(env.MAX_MODERATORS_PER_ROOM, 3)))), // excludes the host
       disconnectGraceMs: num(env.DISCONNECT_GRACE_SECONDS, 60) * 1000,
       hostGraceMs: num(env.HOST_GRACE_SECONDS, 20) * 1000,
       emptyRoomTtlMs: num(env.EMPTY_ROOM_TTL_SECONDS, 30) * 1000,
@@ -125,6 +133,10 @@ export function loadConfig(env = process.env) {
       ticketPerSession: num(env.RL_TICKET_PER_SESSION, 30),
       oauthStartPerIp: num(env.RL_OAUTH_START_PER_IP, 30),
       apiPerIp: num(env.RL_API_PER_IP, 600),
+      extPairCreatePerSession: num(env.RL_EXT_PAIR_CREATE_PER_SESSION, 20),
+      extPairRedeemPerIp: num(env.RL_EXT_PAIR_REDEEM_PER_IP, 20),
+      extPairRedeemGlobal: num(env.RL_EXT_PAIR_REDEEM_GLOBAL, 300),
+      extTicketPerCredential: num(env.RL_EXT_TICKET_PER_CREDENTIAL, 30),
       windowMs: num(env.RL_WINDOW_SECONDS, 600) * 1000,
     }),
   });

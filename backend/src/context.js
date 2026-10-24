@@ -7,6 +7,7 @@ import { createSessionService } from "./services/sessionService.js";
 import { createUserService } from "./services/userService.js";
 import { createOtpService } from "./services/otpService.js";
 import { createTicketService } from "./services/ticketService.js";
+import { createExtensionService } from "./services/extensionService.js";
 import { createGoogleAuthService } from "./services/googleAuthService.js";
 import { providerRegistry } from "./providers/registry.js";
 import { roomManager } from "./services/roomManager.js";
@@ -33,6 +34,7 @@ export async function createContext({
     db: database, config, mailer, now, hmacKey: deriveKey(config.sessionSecret, "otp-hmac"),
   });
   const tickets = createTicketService({ ttlMs: config.socket.ticketTtlMs, now });
+  const extensions = createExtensionService({ db: database, config, sessions, now });
   const google = createGoogleAuthService({ config, fetchImpl: googleFetch, jwks: googleJwks, now });
 
   const L = config.limits;
@@ -49,17 +51,23 @@ export async function createContext({
     ticketSession: mk(L.ticketPerSession, 60_000),
     oauthIp: mk(L.oauthStartPerIp),
     apiIp: mk(L.apiPerIp, 60_000),
+    extPairCreate: mk(L.extPairCreatePerSession),
+    extPairRedeemIp: mk(L.extPairRedeemPerIp),
+    extPairRedeemGlobal: mk(L.extPairRedeemGlobal),
+    extTicket: mk(L.extTicketPerCredential, 60_000),
   };
 
   let maintenance = null;
   return {
-    config, db: database, sessions, users, otp, tickets, google, mailer, limiters,
+    config, db: database, sessions, users, otp, tickets, extensions, google, mailer, limiters,
     rooms: roomManager,
+    companions: new Map(), // credentialId -> live companion socket (maintained by the socket layer)
     providers: providerRegistry,
     startMaintenance() {
       roomManager.startSweeper();
       maintenance = setInterval(() => {
         tickets.sweep();
+        extensions.cleanupExpired().catch((err) => logger.warn(`Extension cleanup failed (${err?.code || "error"})`));
         sessions.cleanupExpired().catch((err) => logger.warn(`Session cleanup failed (${err?.code || "error"})`));
       }, 60 * 60_000);
       maintenance.unref?.();

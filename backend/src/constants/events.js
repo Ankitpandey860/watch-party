@@ -16,6 +16,9 @@ export const CLIENT_EVENTS = Object.freeze({
   REMOVE_PARTICIPANT: "remove_participant",
   TRANSFER_HOST: "transfer_host",
   SEND_MESSAGE: "send_message",
+  SET_RATE: "set_rate",
+  UPDATE_ROOM_SETTINGS: "update_room_settings",
+  PLAYER_STATUS: "player_status", // a participant reports whether their own player is on the right title
 });
 
 // Server -> Client
@@ -30,6 +33,10 @@ export const SERVER_EVENTS = Object.freeze({
   HOST_CHANGED: "host_changed",
   REMOVED_FROM_ROOM: "removed_from_room", // sent only to the participant who got kicked
   NEW_MESSAGE: "new_message", // broadcast to the room whenever a chat message is sent
+  ROOM_SETTINGS: "room_settings", // host-controlled room settings changed
+  EXTENSION_STATUS: "extension_status", // to the user's own web sockets: their paired extension connected/disconnected
+  COMPANION_READY: "companion_ready", // to an extension socket right after it attached to its room
+  COMPANION_ENDED: "companion_ended", // to an extension socket just before it is cut off (reason included)
   AUTH_EXPIRED: "auth_expired", // session ended (expired / logged out / revoked); the socket is then closed
   ERROR: "error_event", // "error" is a reserved Socket.IO event name, so we use our own
 });

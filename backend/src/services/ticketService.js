@@ -18,21 +18,21 @@ export function createTicketService({ ttlMs, now = Date.now }) {
 
   return {
     ttlSeconds: Math.round(ttlMs / 1000),
-    issue({ sessionId, roomId }) {
+    issue({ sessionId, roomId, credentialId = null }) {
       if (tickets.size >= MAX_TICKETS) sweep();
       if (tickets.size >= MAX_TICKETS) tickets.delete(tickets.keys().next().value); // oldest
       const ticket = randomToken(32);
-      tickets.set(sha256Hex(ticket), { sessionId, roomId, expiresAt: now() + ttlMs });
+      tickets.set(sha256Hex(ticket), { sessionId, roomId, credentialId, expiresAt: now() + ttlMs });
       return ticket;
     },
-    /** Returns { sessionId, roomId } the first time only, and only before expiry. */
+    /** Returns { sessionId, roomId, credentialId } the first time only, and only before expiry. */
     consume(ticket) {
       if (typeof ticket !== "string" || ticket.length < 20 || ticket.length > 128) return null;
       const key = sha256Hex(ticket);
       const entry = tickets.get(key);
       if (!entry) return null;
       tickets.delete(key); // single use, even if expired
-      return entry.expiresAt > now() ? { sessionId: entry.sessionId, roomId: entry.roomId } : null;
+      return entry.expiresAt > now() ? { sessionId: entry.sessionId, roomId: entry.roomId, credentialId: entry.credentialId } : null;
     },
     sweep,
     get size() { return tickets.size; },

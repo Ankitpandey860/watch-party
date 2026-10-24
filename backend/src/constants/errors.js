@@ -27,6 +27,11 @@ export const ERROR_CODES = Object.freeze({
   RATE_LIMITED: "RATE_LIMITED",
   INVALID_JSON: "INVALID_JSON",
   PAYLOAD_TOO_LARGE: "PAYLOAD_TOO_LARGE",
+  // --- providers / permissions
+  MODERATOR_LIMIT: "MODERATOR_LIMIT",
+  MEDIA_MISMATCH: "MEDIA_MISMATCH", // command refers to a different title/provider than the room is on
+  UNSUPPORTED_MEDIA: "UNSUPPORTED_MEDIA",
+  PAIRING_INVALID: "PAIRING_INVALID",
 });
 
 export class AppError extends Error {

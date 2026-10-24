@@ -1,0 +1,23 @@
+:root { color-scheme: light dark; --bg:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --accent:#4f46e5; --bad:#b91c1c; --ok:#15803d; --warn:#b45309; }
+@media (prefers-color-scheme: dark) { :root { --bg:#111827; --fg:#f3f4f6; --muted:#9ca3af; --line:#374151; --accent:#818cf8; --bad:#f87171; --ok:#4ade80; --warn:#fbbf24; } }
+* { box-sizing: border-box; }
+body { margin:0; width:340px; padding:14px; font:13px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+header { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+.logo { display:grid; place-items:center; width:24px; height:24px; border-radius:6px; background:var(--accent); color:#fff; font-size:11px; }
+h1 { font-size:14px; margin:0; }
+.muted { color:var(--muted); margin:0 0 10px; }
+label { display:block; margin:8px 0 3px; font-weight:600; }
+input { width:100%; padding:7px 8px; border:1px solid var(--line); border-radius:6px; background:transparent; color:inherit; font:inherit; }
+input#code { letter-spacing:.12em; text-transform:uppercase; font-family:ui-monospace,monospace; }
+button { padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+button.primary { background:var(--accent); color:#fff; border-color:transparent; margin-top:10px; width:100%; }
+button.danger { color:var(--bad); }
+button:disabled { opacity:.55; cursor:default; }
+dl { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; margin:0 0 8px; }
+dt { color:var(--muted); } dd { margin:0; word-break:break-word; }
+.row { display:flex; gap:6px; flex-wrap:wrap; }
+.error { color:var(--bad); margin:8px 0 0; min-height:1em; }
+.hint { margin:6px 0; padding:7px 9px; border-radius:6px; background:color-mix(in srgb, var(--accent) 10%, transparent); }
+.ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+footer { margin-top:12px; padding-top:8px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
+[hidden] { display:none !important; }

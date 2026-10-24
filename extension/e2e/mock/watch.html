@@ -1,0 +1,29 @@
+<!doctype html><meta charset=utf-8><title>MOCK Netflix-like player (test fixture)</title>
+<style>body{margin:0;background:#000;color:#fff;font:14px sans-serif}video{width:640px;height:360px;display:block}</style>
+<video id=main playsinline src="/clip.webm" loop></video>
+<p>MOCK page — NOT Netflix. Emulates the shape of the internal player API for extension integration tests.</p>
+<script>
+// Test fixture. `?api=none` simulates Netflix removing/renaming the internal API (extension must fall back).
+// It also traps any direct write to video.currentTime (the documented way to break Netflix's player).
+(function () {
+  const v = document.getElementById("main");
+  window.__directSeekCrash = false;
+  const real = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime");
+  Object.defineProperty(v, "currentTime", {
+    get() { return real.get.call(v); },
+    set() { window.__directSeekCrash = true; throw new Error("player crashed (direct currentTime write)"); },
+  });
+  const player = {
+    getCurrentTime: () => v.currentTime * 1000, getDuration: () => v.duration * 1000, isPaused: () => v.paused,
+    play: () => { v.play().catch(() => {}); }, pause: () => v.pause(), seek: (ms) => real.set.call(v, ms / 1000),
+  };
+  if (new URLSearchParams(location.search).get("api") !== "none") {
+    window.netflix = { appContext: { state: { playerApp: { getAPI: () => ({ videoPlayer: {
+      getAllPlayerSessionIds: () => ["sessionId-1"], getVideoPlayerBySessionId: () => player } }) } } } };
+  }
+  // What a real user does through Netflix's own UI (uses the player, never the extension).
+  window.__user = { play: () => v.play(), pause: () => v.pause(), seek: (s) => real.set.call(v, s) };
+  // buffering simulation for tests
+  window.__stall = (on) => { if (on) { v.__rate = v.playbackRate; v.playbackRate = 0.0625; } else { v.playbackRate = v.__rate || 1; } };
+})();
+</script>

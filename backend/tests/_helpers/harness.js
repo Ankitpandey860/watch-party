@@ -34,6 +34,7 @@ const DEFAULT_ENV = {
   RL_API_PER_IP: "100000", RL_GUEST_PER_IP: "100000", RL_ROOM_CREATE_PER_USER: "100000",
   RL_ROOM_CREATE_PER_IP: "100000", RL_ROOM_LOOKUP_PER_IP: "100000", RL_TICKET_PER_SESSION: "100000",
   RL_OTP_REQUEST_PER_IP: "100000", RL_OTP_REQUEST_PER_EMAIL: "100000",
+  RL_EXT_PAIR_CREATE_PER_SESSION: "100000", RL_EXT_PAIR_REDEEM_PER_IP: "100000", RL_EXT_PAIR_REDEEM_GLOBAL: "100000", RL_EXT_TICKET_PER_CREDENTIAL: "100000",
   RL_OTP_VERIFY_PER_IP: "100000", RL_OTP_VERIFY_PER_EMAIL: "100000", RL_OAUTH_START_PER_IP: "100000",
   MAX_ROOMS_PER_USER: "100", MAX_ROOMS: "1000",
 };
@@ -223,8 +224,8 @@ export async function startServer({ env = {}, mailerTransport } = {}) {
     },
 
     /** A raw client with an arbitrary ticket (for forged/invalid ticket tests). */
-    rawClient(auth) {
-      const c = new TestClient(url, undefined, auth);
+    rawClient(auth, opts) {
+      const c = new TestClient(url, undefined, auth, opts);
       clients.add(c);
       return c;
     },
@@ -239,11 +240,12 @@ export async function startServer({ env = {}, mailerTransport } = {}) {
 }
 
 export class TestClient {
-  constructor(url, ticket, auth) {
+  constructor(url, ticket, auth, { origin } = {}) {
     this.log = [];
     this.socket = ioClient(url, {
       transports: ["websocket"], forceNew: true, reconnection: false,
       auth: auth !== undefined ? auth : { ticket },
+      ...(origin ? { extraHeaders: { origin } } : {}),
     });
     this.socket.onAny((event, ...args) => this.log.push({ event, payload: args[0] }));
   }

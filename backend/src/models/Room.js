@@ -9,11 +9,13 @@ export class Room {
    * @param {string} ownerId - the authenticated user who created the room (always a "user", never a guest)
    * @param {{ maxParticipants?: number }} [opts]
    */
-  constructor(roomId, ownerId, { maxParticipants = 30 } = {}) {
+  constructor(roomId, ownerId, { maxParticipants = 30, maxModerators = 3 } = {}) {
     this.roomId = roomId;
     this.ownerId = ownerId; // permanent host entitlement; changes only via transfer_host
     this.hostId = ownerId; // current host (an "acting host" while the owner is away)
     this.maxParticipants = maxParticipants;
+    // Host-controlled settings (server-enforced). Moderators exclude the host.
+    this.settings = { maxModerators, moderatorsCanControl: true };
     this.createdAt = Date.now();
     this.lastActiveAt = Date.now();
 
@@ -24,7 +26,7 @@ export class Room {
     this.messages = [];
 
     // Single source of truth for playback; clients only mirror this.
-    this.currentVideo = { provider: null, videoId: null, playing: false, currentTime: 0, updatedAt: Date.now(), seq: 0 };
+    this.currentVideo = { provider: null, videoId: null, mediaParams: null, playing: false, currentTime: 0, rate: 1, updatedAt: Date.now(), seq: 0 };
     this.lastTimeSyncAt = 0;
 
     this.emptyRoomTimer = null;
@@ -58,6 +60,11 @@ export class Room {
 
   ban(id) {
     this.bans.add(id);
+  }
+
+  /** Number of current moderators (the host is never counted). */
+  moderatorCount() {
+    return this.listParticipants().filter((p) => p.role === ROLES.MODERATOR).length;
   }
 
   isFull() {
@@ -208,6 +215,7 @@ export class Room {
       roomId: this.roomId,
       hostId: this.hostId,
       currentVideo: this.getEffectivePlayback(),
+      settings: { ...this.settings },
       participants: this.publicRoster(),
       messages: this.getMessages(),
     };

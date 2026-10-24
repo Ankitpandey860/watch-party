@@ -70,9 +70,9 @@ describe("socket join and presence", () => {
     const { roomId, hostUserId, hostState } = await createRoomWithHost(server, "Host");
     assert.equal(hostState.roomId, roomId);
     assert.equal(hostState.hostId, hostUserId);
-    assert.deepEqual(hostState.you, { id: hostUserId, username: "Host", role: "host", kind: "user", online: true });
+    assert.deepEqual(hostState.you, { id: hostUserId, username: "Host", role: "host", kind: "user", online: true, playerStatus: null });
     assert.deepEqual(hostState.messages, []);
-    assert.deepEqual({ ...hostState.currentVideo, updatedAt: undefined }, { provider: null, videoId: null, playing: false, currentTime: 0, updatedAt: undefined, seq: 0 });
+    assert.deepEqual({ ...hostState.currentVideo, updatedAt: undefined }, { provider: null, videoId: null, mediaParams: null, playing: false, currentTime: 0, rate: 1, updatedAt: undefined, seq: 0 });
   });
 
   test("everyone receives user_joined with the roster; guests are labelled kind=guest", async () => {

@@ -38,6 +38,7 @@ const EXPECTED_EVENTS = [
   "host_changed",
   "removed_from_room",
   "sync_state",
+  "room_settings",
   "new_message",
   "error_event",
 ];
@@ -433,6 +434,138 @@ describe("outgoing actions (the wire contract)", () => {
     });
     const payloads = mocks.socket.emit.mock.calls.map((c) => JSON.stringify(c[1] ?? {}));
     expect(payloads.join(" ")).not.toMatch(/isHost|"role":"host"|username|senderId|ownerId/);
+  });
+});
+
+describe("multi-provider state and commands", () => {
+  const NF = {
+    provider: "netflix",
+    videoId: "80100172",
+    mediaParams: null,
+    playing: false,
+    currentTime: 0,
+    rate: 1,
+    seq: 3,
+  };
+
+  test("room_state carries provider, mediaParams, rate and the room's settings", () => {
+    const { result, join } = setup();
+    join({
+      currentVideo: {
+        provider: "vimeo",
+        videoId: "76979871",
+        mediaParams: { hash: "abcdef0123" },
+        playing: true,
+        currentTime: 12,
+        rate: 1.5,
+        seq: 4,
+      },
+      settings: { maxModerators: 2, moderatorsCanControl: false },
+    });
+    expect(result.current.provider).toBe("vimeo");
+    expect(result.current.videoUrl).toBe("https://vimeo.com/76979871/abcdef0123");
+    expect(result.current.mediaParams).toEqual({ hash: "abcdef0123" });
+    expect(result.current.playback).toMatchObject({ playing: true, currentTime: 12, rate: 1.5 });
+    expect(result.current.settings).toEqual({ maxModerators: 2, moderatorsCanControl: false });
+  });
+
+  test("an older server (no rate/settings/params) still works: defaults apply", () => {
+    const { result, join } = setup();
+    join({
+      currentVideo: {
+        provider: "youtube",
+        videoId: "aaaaaaaaaaa",
+        playing: false,
+        currentTime: 0,
+        seq: 1,
+      },
+    });
+    expect(result.current.playback.rate).toBe(1);
+    expect(result.current.settings).toEqual({ maxModerators: 3, moderatorsCanControl: true });
+    expect(result.current.mediaParams).toBeNull();
+  });
+
+  test("sync_state updates rate and params; room_settings updates settings", () => {
+    const { result, join, fire } = setup();
+    join();
+    fire("sync_state", { ...NF, seq: 5, reason: "change_video" });
+    expect(result.current.provider).toBe("netflix");
+    fire("sync_state", { ...NF, seq: 6, rate: 1.25, reason: "set_rate" });
+    expect(result.current.playback.rate).toBe(1.25);
+    fire("room_settings", { settings: { moderatorsCanControl: false } });
+    expect(result.current.settings).toEqual({ maxModerators: 3, moderatorsCanControl: false });
+  });
+
+  test("with a title loaded, commands carry the title they were issued for (stale-command protection)", () => {
+    const { result, join } = setup();
+    join({ currentVideo: { ...NF } });
+    const ref = { provider: "netflix", mediaId: "80100172" };
+    act(() => {
+      result.current.play();
+      result.current.pause();
+      result.current.seek(9);
+      result.current.setRate(1.5);
+    });
+    expect(mocks.socket.emit).toHaveBeenCalledWith("play", { ref });
+    expect(mocks.socket.emit).toHaveBeenCalledWith("pause", { ref });
+    expect(mocks.socket.emit).toHaveBeenCalledWith("seek", { time: 9, ref });
+    expect(mocks.socket.emit).toHaveBeenCalledWith("set_rate", { rate: 1.5, ref });
+  });
+
+  test("the ref follows the room: after a change_video the NEW title is referenced", () => {
+    const { result, join, fire } = setup();
+    join({ currentVideo: { ...NF } });
+    fire("sync_state", {
+      provider: "vimeo",
+      videoId: "76979871",
+      mediaParams: {},
+      playing: false,
+      currentTime: 0,
+      rate: 1,
+      seq: 9,
+      reason: "change_video",
+    });
+    act(() => result.current.seek(3));
+    expect(mocks.socket.emit).toHaveBeenLastCalledWith("seek", {
+      time: 3,
+      ref: { provider: "vimeo", mediaId: "76979871" },
+    });
+  });
+
+  test("time_sync stays {time, seq} (seq already makes it stale-safe); the ref is NOT added", () => {
+    const { result, join } = setup();
+    join({ currentVideo: { ...NF } });
+    act(() => result.current.syncTime(4));
+    expect(mocks.socket.emit).toHaveBeenLastCalledWith("time_sync", { time: 4, seq: 3 });
+  });
+
+  test("changeVideo can pin a provider; updateSettings and reportPlayerStatus use the wire events", () => {
+    const { result, join } = setup();
+    join({ currentVideo: { ...NF } });
+    act(() => result.current.changeVideo("76979871", "vimeo"));
+    expect(mocks.socket.emit).toHaveBeenLastCalledWith("change_video", {
+      url: "76979871",
+      provider: "vimeo",
+    });
+    act(() => result.current.updateSettings({ moderatorsCanControl: false }));
+    expect(mocks.socket.emit).toHaveBeenLastCalledWith("update_room_settings", {
+      moderatorsCanControl: false,
+    });
+    act(() => result.current.reportPlayerStatus("ready"));
+    expect(mocks.socket.emit).toHaveBeenLastCalledWith("player_status", {
+      status: "ready",
+      ref: { provider: "netflix", mediaId: "80100172" },
+    });
+  });
+
+  test("leaving clears the media reference and the settings", () => {
+    const { result, join } = setup();
+    join({ currentVideo: { ...NF }, settings: { maxModerators: 1, moderatorsCanControl: false } });
+    act(() => result.current.leaveRoom());
+    expect(result.current.settings).toEqual({ maxModerators: 3, moderatorsCanControl: true });
+    expect(result.current.mediaParams).toBeNull();
+    act(() => result.current.play());
+    expect(mocks.socket.emit).toHaveBeenLastCalledWith("play"); // bare again: no stale ref survives a leave
   });
 });
 

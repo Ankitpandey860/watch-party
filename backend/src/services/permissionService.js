@@ -7,9 +7,13 @@ import { AppError, ERROR_CODES } from "../constants/errors.js";
  */
 
 /** Throws if `participant` isn't allowed to control playback (play/pause/seek/change_video). */
-export function assertCanControlPlayback(participant) {
+export function assertCanControlPlayback(participant, room) {
   if (!participant || !PLAYBACK_ROLES.includes(participant.role)) {
     throw new AppError(ERROR_CODES.NOT_AUTHORIZED, "Only the host and moderators can control playback.", 403);
+  }
+  // The host can switch moderator control off for the room; the host themselves always may.
+  if (participant.role === ROLES.MODERATOR && room && room.settings?.moderatorsCanControl === false) {
+    throw new AppError(ERROR_CODES.NOT_AUTHORIZED, "The host has turned off playback control for moderators.", 403);
   }
 }
 

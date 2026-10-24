@@ -11,13 +11,13 @@ describe("VideoInput", () => {
   test("starts empty with the submit button disabled and no error", () => {
     render(<VideoInput onChangeVideo={vi.fn()} />);
     expect(button()).toBeDisabled();
-    expect(screen.queryByText(/enter a valid youtube link or video id/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/enter a valid link or video id/i)).not.toBeInTheDocument();
   });
 
   test("an invalid, non-empty value shows an error and keeps the button disabled", async () => {
     render(<VideoInput onChangeVideo={vi.fn()} />);
-    await userEvent.type(box(), "https://vimeo.com/123");
-    expect(screen.getByText(/enter a valid youtube link or video id/i)).toBeInTheDocument();
+    await userEvent.type(box(), "https://example.com/123");
+    expect(screen.getByText(/enter a valid link or video id/i)).toBeInTheDocument();
     expect(button()).toBeDisabled();
   });
 
@@ -52,6 +52,15 @@ describe("VideoInput", () => {
     render(<VideoInput onChangeVideo={vi.fn()} />);
     await userEvent.type(box(), "https://notyoutube.com/watch?v=dQw4w9WgXcQ");
     expect(button()).toBeDisabled();
+  });
+
+  test("a Vimeo link is now accepted and submitted raw (multi-provider)", async () => {
+    const onChangeVideo = vi.fn();
+    render(<VideoInput onChangeVideo={onChangeVideo} />);
+    await userEvent.type(box(), "https://vimeo.com/76979871");
+    expect(button()).toBeEnabled();
+    await userEvent.click(button());
+    expect(onChangeVideo).toHaveBeenCalledWith("https://vimeo.com/76979871");
   });
 
   test("disabled: input and button are disabled and a role notice is shown", () => {

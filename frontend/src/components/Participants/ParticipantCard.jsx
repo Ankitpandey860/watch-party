@@ -5,6 +5,15 @@ import { RoleBadge } from "../RoleBadge/RoleBadge";
 import { Dropdown } from "../Dropdown";
 import { cn } from "../../utils/cn";
 
+// Only problems are shown (a healthy player needs no badge). Informational: set by each person's own
+// player/extension and never grants or removes any permission.
+const PLAYER_STATUS = {
+  wrong_title: "Wrong title open",
+  blocked: "Needs a click to play",
+  no_player: "Player not ready",
+  unsupported: "Can't play this",
+};
+
 const GUEST_HINT = "Guests can't be moderators or host. They need to sign in first.";
 
 export function ParticipantCard({
@@ -16,7 +25,7 @@ export function ParticipantCard({
   onRemove,
   onTransferHost,
 }) {
-  const { username, role, online, kind } = participant;
+  const { username, role, online, kind, playerStatus } = participant;
   const isGuest = kind === "guest";
   return (
     <li
@@ -34,6 +43,9 @@ export function ParticipantCard({
           <RoleBadge role={role} />
           {isGuest && <Badge tone="neutral">Guest</Badge>}
           {!online && <span className="text-[11px] text-muted-foreground">offline</span>}
+          {online && PLAYER_STATUS[playerStatus] && (
+            <Badge tone="paused">{PLAYER_STATUS[playerStatus]}</Badge>
+          )}
         </div>
       </div>
       {/* Only the HOST manages people (the server enforces this too). Always visible on touch screens. */}

@@ -1,5 +1,5 @@
 import { AppError, ERROR_CODES } from "../constants/errors.js";
-import { isAllowedOrigin } from "../config/cors.js";
+import { isAllowedOrigin, isExtensionOrigin } from "../config/cors.js";
 import { parseCookies } from "../http/cookies.js";
 
 /** Resolves the session cookie to req.principal (or null). Never trusts anything from the body/headers except the cookie token. */
@@ -35,8 +35,19 @@ export function requireUser(req, _res, next) {
  */
 export function csrfGuard({ config }) {
   const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
+  // Endpoints used by the browser EXTENSION. They never read the session cookie (they use a one-time
+  // code or an `Authorization: Bearer` credential), so CSRF does not apply; instead the Origin must be
+  // absent (non-browser), the web app itself, or an allowed extension origin. Any other website is refused.
+  const EXTENSION_PATHS = new Set(["/api/extension/pair", "/api/extension/me", "/api/extension/socket-ticket", "/api/extension/disconnect"]);
   return (req, _res, next) => {
-    if (SAFE.has(req.method)) return next();
+    if (SAFE.has(req.method) && !EXTENSION_PATHS.has(req.path)) return next();
+    if (EXTENSION_PATHS.has(req.path)) {
+      const origin = req.headers.origin;
+      if (origin && !isExtensionOrigin(origin, config.extension.origins) && !isAllowedOrigin(origin, config.corsOrigins)) {
+        return next(new AppError(ERROR_CODES.CSRF_REJECTED, "Request origin not allowed.", 403));
+      }
+      return next();
+    }
     const origin = req.headers.origin;
     if (origin && !isAllowedOrigin(origin, config.corsOrigins)) {
       return next(new AppError(ERROR_CODES.CSRF_REJECTED, "Request origin not allowed.", 403));

@@ -57,7 +57,7 @@ describe("commands", () => {
       viewer.waitFor("sync_state", { since: vs, where: (e) => e.reason === "play" }),
     ]);
     assert.equal(a.playing && b.playing, true);
-    assert.deepEqual(Object.keys(a).sort(), ["currentTime", "playing", "provider", "reason", "seq", "updatedAt", "videoId"]);
+    assert.deepEqual(Object.keys(a).sort(), ["currentTime", "mediaParams", "playing", "provider", "rate", "reason", "seq", "updatedAt", "videoId"]);
   });
 
   test("seq is strictly increasing across every update", async () => {
@@ -98,7 +98,7 @@ describe("commands", () => {
   test("FIXED: change_video rejects non-YouTube hosts, lookalike domains, malformed ids and oversized input", async () => {
     const { host } = await room();
     const bad = [
-      "https://vimeo.com/12345", "hello", "", "https://notyoutube.com/watch?v=abcdefghijk",
+      "https://example.com/12345", "hello", "", "https://notyoutube.com/watch?v=abcdefghijk",
       "https://youtube.com.evil.io/watch?v=abcdefghijk", "https://evil.io/?u=https://youtube.com/watch?v=abcdefghijk",
       "https://www.youtube.com/watch?v=this-is-definitely-not-an-eleven-char-id", "https://www.youtube.com/watch?v=short",
       "https://www.youtube.com/watch?v=<script>alert(1)</script>", "javascript:alert(1)", "ftp://youtube.com/watch?v=abcdefghijk",

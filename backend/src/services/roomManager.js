@@ -38,7 +38,7 @@ class RoomManager {
       throw new AppError(ERROR_CODES.ROOM_LIMIT, "You already have the maximum number of open rooms. Close one first.", 409);
     }
     const roomId = this.generateUniqueRoomId();
-    const room = new Room(roomId, ownerId, { maxParticipants: config.rooms.maxParticipants });
+    const room = new Room(roomId, ownerId, { maxParticipants: config.rooms.maxParticipants, maxModerators: config.rooms.maxModerators });
     this.rooms.set(roomId, room);
     logger.info(`Room created: ${roomId}`);
     return room;

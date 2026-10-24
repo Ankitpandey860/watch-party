@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Watch Party for Netflix",
+  "version": "0.0.0",
+  "description": "Keeps YOUR OWN Netflix playback in step with a Watch Party room. Never reads or sends your Netflix login, cookies or video.",
+  "minimum_chrome_version": "116",
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "action": { "default_title": "Watch Party", "default_popup": "popup.html" },
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://www.netflix.com/*"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    { "matches": ["https://www.netflix.com/*"], "js": ["netflix-main.js"], "run_at": "document_start", "world": "MAIN" },
+    { "matches": ["https://www.netflix.com/*"], "js": ["content.js"], "run_at": "document_idle" }
+  ]
+}

@@ -1,9 +1,10 @@
 import { roomManager } from "../../services/roomManager.js";
 import { assertIsHost, assertNotSelf, assertCanHoldElevatedRole } from "../../services/permissionService.js";
 import { ASSIGNABLE_ROLES, ROLES } from "../../constants/roles.js";
-import { SERVER_EVENTS } from "../../constants/events.js";
+import { CLIENT_EVENTS, SERVER_EVENTS } from "../../constants/events.js";
 import { AppError, ERROR_CODES } from "../../constants/errors.js";
 import { onPayload } from "../safeHandler.js";
+import { dropCompanions } from "../socketUtils.js";
 import { logger } from "../../utils/logger.js";
 
 function getRoomAndHost(socket) {
@@ -35,12 +36,42 @@ export function registerRoleHandlers(io, socket) {
     if (target.role === ROLES.HOST) {
       throw new AppError(ERROR_CODES.INVALID_PAYLOAD, "Use transfer_host to change who the host is.", 400);
     }
-    if (role === ROLES.MODERATOR) assertCanHoldElevatedRole(target); // guests can't be moderators
+    if (role === ROLES.MODERATOR) {
+      assertCanHoldElevatedRole(target); // guests can't be moderators
+      // The cap counts moderators other than this target (re-assigning an existing moderator is a no-op).
+      const others = room.listParticipants().filter((p) => p.role === ROLES.MODERATOR && p.id !== target.id).length;
+      if (others >= room.settings.maxModerators) {
+        throw new AppError(ERROR_CODES.MODERATOR_LIMIT,
+          `This room allows at most ${room.settings.maxModerators} moderator${room.settings.maxModerators === 1 ? "" : "s"} (not counting the host).`, 409);
+      }
+    }
 
     target.role = role;
     io.to(room.roomId).emit(SERVER_EVENTS.ROLE_ASSIGNED, {
       userId: target.id, username: target.username, role: target.role, participants: room.publicRoster(),
     });
+  }, { bucket: "admin" });
+
+  // Host changes room settings: whether moderators may control playback, and the moderator cap.
+  onPayload(socket, CLIENT_EVENTS.UPDATE_ROOM_SETTINGS, ({ moderatorsCanControl, maxModerators }) => {
+    const { room } = getRoomAndHost(socket);
+    const next = { ...room.settings };
+    if (moderatorsCanControl !== undefined) {
+      if (typeof moderatorsCanControl !== "boolean") throw new AppError(ERROR_CODES.INVALID_PAYLOAD, "moderatorsCanControl must be true or false.", 400);
+      next.moderatorsCanControl = moderatorsCanControl;
+    }
+    if (maxModerators !== undefined) {
+      if (!Number.isInteger(maxModerators) || maxModerators < 0 || maxModerators > 10) {
+        throw new AppError(ERROR_CODES.INVALID_PAYLOAD, "maxModerators must be a whole number from 0 to 10.", 400);
+      }
+      // Lowering the cap never silently demotes anyone: the host demotes first.
+      if (maxModerators < room.moderatorCount()) {
+        throw new AppError(ERROR_CODES.MODERATOR_LIMIT, `There are already ${room.moderatorCount()} moderators; remove some first.`, 409);
+      }
+      next.maxModerators = maxModerators;
+    }
+    room.settings = next;
+    io.to(room.roomId).emit(SERVER_EVENTS.ROOM_SETTINGS, { settings: { ...room.settings } });
   }, { bucket: "admin" });
 
   // Host removes a participant AND bans them from this room for its lifetime.
@@ -58,6 +89,7 @@ export function registerRoleHandlers(io, socket) {
     const targetSocketId = target.socketId;
     room.ban(id);
     room.removeParticipant(id);
+    dropCompanions(io, room.roomId, id, "removed");
 
     io.to(room.roomId).emit(SERVER_EVENTS.PARTICIPANT_REMOVED, {
       userId: id, username: target.username, participants: room.publicRoster(),

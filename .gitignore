@@ -32,3 +32,4 @@ load-test/node_modules/
 load-test/rooms.json
 # local embedded database
 .data/
+dist-test/

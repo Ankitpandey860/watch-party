@@ -2,6 +2,7 @@ import { Users } from "lucide-react";
 import { Sidebar } from "../Sidebar/Sidebar";
 import { ParticipantCard } from "./ParticipantCard";
 import { EmptyState } from "../EmptyState";
+import { RoomSettings } from "../RoomSettings/RoomSettings";
 
 export function ParticipantsPanel({
   participants = [],
@@ -11,6 +12,8 @@ export function ParticipantsPanel({
   onDemote,
   onRemove,
   onTransferHost,
+  settings,
+  onUpdateSettings,
 }) {
   const canManage = role === "host"; // moderators control playback only; people management is host-only
   const online = participants.filter((p) => p.online).length;
@@ -30,6 +33,15 @@ export function ParticipantsPanel({
           </div>
         </div>
       </div>
+
+      {settings && (
+        <RoomSettings
+          settings={settings}
+          isHost={role === "host"}
+          moderatorCount={participants.filter((p) => p.role === "moderator").length}
+          onChange={onUpdateSettings}
+        />
+      )}
 
       {participants.length === 0 ? (
         <EmptyState

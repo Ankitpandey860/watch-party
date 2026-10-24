@@ -22,7 +22,8 @@ import providerRegistry from "../providers";
 const RoomContext = createContext(null);
 
 const MAX_STORED_MESSAGES = 100;
-const DEFAULT_PLAYBACK = { playing: false, currentTime: 0, duration: 0, volume: 60 };
+const DEFAULT_PLAYBACK = { playing: false, currentTime: 0, duration: 0, volume: 60, rate: 1 };
+const DEFAULT_SETTINGS = { maxModerators: 3, moderatorsCanControl: true };
 const TERMINAL = new Set(["room_not_found", "room_full", "banned", "auth_expired", "unauthorized"]);
 
 // Server error code -> terminal screen (only when we are not already in the room).
@@ -43,6 +44,8 @@ export function RoomProvider({ children }) {
   const [messages, setMessages] = useState([]);
   const [videoUrl, setVideoUrl] = useState("");
   const [provider, setProvider] = useState(null);
+  const [mediaParams, setMediaParams] = useState(null);
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [playback, setPlayback] = useState(DEFAULT_PLAYBACK);
   const [connectionStatus, setConnectionStatus] = useState("idle");
   const [roomError, setRoomError] = useState("");
@@ -50,6 +53,9 @@ export function RoomProvider({ children }) {
   const [driftSeq, setDriftSeq] = useState(0);
 
   const lastSeqRef = useRef(-1);
+  // Which title the room is on RIGHT NOW. Sent with commands so the server can refuse one that was
+  // meant for a previous title (stale-command protection).
+  const mediaRefRef = useRef(null);
   const statusRef = useRef("idle");
   const userIdRef = useRef("");
   const unsubscribersRef = useRef([]);
@@ -62,9 +68,12 @@ export function RoomProvider({ children }) {
   const bumpSync = useCallback(() => setSyncSeq((n) => n + 1), []);
   const bumpDrift = useCallback(() => setDriftSeq((n) => n + 1), []);
 
-  const applyVideo = useCallback((providerId, videoId) => {
-    setProvider(videoId ? providerId || "youtube" : null);
-    setVideoUrl(videoId ? providerRegistry.urlFor(providerId, videoId) : "");
+  const applyVideo = useCallback((providerId, videoId, params) => {
+    const id = videoId ? providerId || "youtube" : null;
+    setProvider(id);
+    setMediaParams(videoId ? params || null : null);
+    setVideoUrl(videoId ? providerRegistry.urlFor(providerId, videoId, params) : "");
+    mediaRefRef.current = id ? { provider: id, mediaId: videoId } : null;
   }, []);
 
   const clearListeners = useCallback(() => {
@@ -83,6 +92,9 @@ export function RoomProvider({ children }) {
     setMessages([]);
     setVideoUrl("");
     setProvider(null);
+    setMediaParams(null);
+    setSettings(DEFAULT_SETTINGS);
+    mediaRefRef.current = null;
     setPlayback(DEFAULT_PLAYBACK);
     lastSeqRef.current = -1;
     setStatus("idle");
@@ -151,10 +163,16 @@ export function RoomProvider({ children }) {
           userIdRef.current = data.you.id;
           setUsername(data.you.username);
         }
+        if (data.settings) setSettings((s) => ({ ...s, ...data.settings }));
         const cv = data.currentVideo;
         if (cv) {
-          applyVideo(cv.provider, cv.videoId);
-          setPlayback((p) => ({ ...p, playing: cv.playing, currentTime: cv.currentTime }));
+          applyVideo(cv.provider, cv.videoId, cv.mediaParams);
+          setPlayback((p) => ({
+            ...p,
+            playing: cv.playing,
+            currentTime: cv.currentTime,
+            rate: typeof cv.rate === "number" ? cv.rate : 1,
+          }));
           if (typeof cv.seq === "number") lastSeqRef.current = cv.seq;
         }
         setStatus("connected");
@@ -190,11 +208,20 @@ export function RoomProvider({ children }) {
           if (data.seq <= lastSeqRef.current) return;
           lastSeqRef.current = data.seq;
         }
-        applyVideo(data.provider, data.videoId);
-        setPlayback((p) => ({ ...p, playing: data.playing, currentTime: data.currentTime }));
+        applyVideo(data.provider, data.videoId, data.mediaParams);
+        setPlayback((p) => ({
+          ...p,
+          playing: data.playing,
+          currentTime: data.currentTime,
+          rate: typeof data.rate === "number" ? data.rate : 1,
+        }));
         // "periodic" pings only nudge drift; every other reason is a command to apply immediately.
         if (data.reason === "periodic") bumpDrift();
         else bumpSync();
+      });
+
+      on("room_settings", (data) => {
+        if (data?.settings) setSettings((s) => ({ ...s, ...data.settings }));
       });
 
       on("new_message", (message) => {
@@ -233,15 +260,43 @@ export function RoomProvider({ children }) {
   useEffect(() => () => clearListeners(), [clearListeners]);
 
   // ---- outgoing actions (event names + payload shapes are the wire contract) --------------------
-  const play = useCallback(() => socketService.emit("play"), []);
-  const pause = useCallback(() => socketService.emit("pause"), []);
-  const seek = useCallback((time) => socketService.emit("seek", { time }), []);
+  // Playback commands carry the title they were issued for (`ref`) once one is loaded; the server
+  // rejects a command whose ref is not the room's current title. With no title they stay bare.
+  const withRef = (payload) =>
+    mediaRefRef.current ? { ...payload, ref: mediaRefRef.current } : payload;
+  const play = useCallback(
+    () =>
+      mediaRefRef.current ? socketService.emit("play", withRef({})) : socketService.emit("play"),
+    [],
+  );
+  const pause = useCallback(
+    () =>
+      mediaRefRef.current ? socketService.emit("pause", withRef({})) : socketService.emit("pause"),
+    [],
+  );
+  const seek = useCallback((time) => socketService.emit("seek", withRef({ time })), []);
+  const setRate = useCallback((rate) => socketService.emit("set_rate", withRef({ rate })), []);
   // Position reports carry the sequence number they were based on; the server drops stale ones.
   const syncTime = useCallback(
     (time) => socketService.emit("time_sync", { time, seq: lastSeqRef.current }),
     [],
   );
-  const changeVideo = useCallback((url) => socketService.emit("change_video", { url }), []);
+  // `providerHint` (optional) pins the provider, which also makes bare ids (e.g. a Vimeo number) unambiguous.
+  const changeVideo = useCallback(
+    (url, providerHint) =>
+      socketService.emit("change_video", providerHint ? { url, provider: providerHint } : { url }),
+    [],
+  );
+  // Host-only on the server: { moderatorsCanControl?: boolean, maxModerators?: 0..10 }.
+  const updateSettings = useCallback(
+    (patch) => socketService.emit("update_room_settings", patch),
+    [],
+  );
+  // Informational: tells the room whether THIS player is ready / blocked / on the wrong title.
+  const reportPlayerStatus = useCallback(
+    (status) => socketService.emit("player_status", withRef({ status })),
+    [],
+  );
   const assignRole = useCallback(
     (id, newRole) => socketService.emit("assign_role", { userId: id, role: newRole }),
     [],
@@ -267,6 +322,8 @@ export function RoomProvider({ children }) {
       messages,
       videoUrl,
       provider,
+      mediaParams,
+      settings,
       playback,
       connectionStatus,
       roomError,
@@ -280,8 +337,11 @@ export function RoomProvider({ children }) {
       play,
       pause,
       seek,
+      setRate,
       syncTime,
       changeVideo,
+      updateSettings,
+      reportPlayerStatus,
       assignRole,
       removeParticipant,
       transferHost,
@@ -299,6 +359,8 @@ export function RoomProvider({ children }) {
       messages,
       videoUrl,
       provider,
+      mediaParams,
+      settings,
       playback,
       connectionStatus,
       roomError,
@@ -311,8 +373,11 @@ export function RoomProvider({ children }) {
       play,
       pause,
       seek,
+      setRate,
       syncTime,
       changeVideo,
+      updateSettings,
+      reportPlayerStatus,
       assignRole,
       removeParticipant,
       transferHost,

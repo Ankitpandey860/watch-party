@@ -17,6 +17,7 @@ export class Participant {
     this.socketId = null;
     this.joinedAt = Date.now();
     this.disconnectTimer = null; // grace-period removal timer, set on disconnect
+    this.playerStatus = null; // self-reported: "ready" | "wrong_title" | "no_player" | "blocked" (informational only)
   }
 
   attachSocket(socketId) {
@@ -39,7 +40,7 @@ export class Participant {
 
   /** Shape sent to clients. `id` is a public identifier, NOT a credential. */
   toPublic() {
-    return { id: this.id, username: this.username, role: this.role, kind: this.kind, online: this.online };
+    return { id: this.id, username: this.username, role: this.role, kind: this.kind, online: this.online, playerStatus: this.playerStatus };
   }
 }
 

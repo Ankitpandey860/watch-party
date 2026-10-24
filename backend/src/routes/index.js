@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { createAuthRoutes } from "./authRoutes.js";
+import { createExtensionRoutes } from "./extensionRoutes.js";
 import { createRoomRoutes } from "./roomRoutes.js";
 import { attachPrincipal } from "../middlewares/auth.js";
 
@@ -22,5 +23,6 @@ export function createApiRouter(ctx) {
   router.use(attachPrincipal(ctx));
   router.use("/auth", createAuthRoutes(ctx));
   router.use("/rooms", createRoomRoutes(ctx));
+  router.use("/extension", createExtensionRoutes(ctx));
   return router;
 }

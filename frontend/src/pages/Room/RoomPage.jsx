@@ -152,7 +152,6 @@ export function RoomPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, auth.status, principalId]);
 
   // 2) Admission: ask the server (creates the guest identity if needed), then open the socket.

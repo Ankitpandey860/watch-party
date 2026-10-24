@@ -5,7 +5,7 @@ import { SERVER_EVENTS } from "../../constants/events.js";
 import { AppError, ERROR_CODES } from "../../constants/errors.js";
 import { normalizeRoomId } from "../../utils/idGenerator.js";
 import { config } from "../../config/env.js";
-import { emitError, broadcastParticipants } from "../socketUtils.js";
+import { emitError, broadcastParticipants, dropCompanions } from "../socketUtils.js";
 import { onPayload, onSignal } from "../safeHandler.js";
 import { logger } from "../../utils/logger.js";
 
@@ -23,6 +23,7 @@ function departParticipant(io, room, userId, { reasonEvent } = {}) {
 
   const wasHost = room.hostId === userId;
   room.removeParticipant(userId);
+  dropCompanions(io, room.roomId, userId, "left_room");
 
   if (reasonEvent) {
     io.to(room.roomId).emit(reasonEvent, { userId, username: participant.username, participants: room.publicRoster() });
