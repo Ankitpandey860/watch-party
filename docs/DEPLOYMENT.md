@@ -39,9 +39,63 @@ Google Cloud Console → APIs & Services → Credentials → OAuth client (Web).
 for local. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` to the exact same URI. The secret
 lives only on the backend.
 
-## 5. SMTP (e-mail OTP)
-Any SMTP provider. Free tiers are limited and not a production guarantee: Brevo ~300 mails/day, Resend ~100/day
-(check current terms); a personal Gmail account is unsuitable. Set `SMTP_HOST/PORT/USER/PASS/FROM`. Codes are never logged.
+**Why `GOOGLE_REDIRECT_URI` matters with the Vercel rewrite.** Sign-in starts at `/api/auth/google/start` on the *Vercel*
+origin, so the short-lived flow cookie (`wp_oauth`) is stored for the Vercel host. Google then sends the browser back to
+`GOOGLE_REDIRECT_URI`. If that points at the Render host (the default when the variable is unset), the browser does not
+send the cookie there, and the login fails after the Google step with `/auth?error=oauth_failed`.
+
+Reading the backend log (each failed sign-in prints one line with the failing stage; no secrets, codes or tokens):
+
+| Log line | Meaning / fix |
+|---|---|
+| `stage=flow-cookie-missing … callbackHost=A redirectUriHost=B` | The callback arrived without the flow cookie. Make `GOOGLE_REDIRECT_URI` use the same host that serves `/api/auth/google/start` (your Vercel URL) and register that exact URI in Google Cloud Console. Also happens if the callback is opened in another browser. |
+| `stage=flow-cookie-invalid` | Cookie present but cannot be opened: `SESSION_SECRET` changed between start and callback (or the cookie was tampered with). |
+| `stage=flow-expired` | The user took longer than 10 minutes. |
+| `stage=state-mismatch` | State differs from the one we issued (CSRF attempt or two tabs racing). |
+| `stage=token-exchange status=400 oauth_error=invalid_grant` | Code already used/expired, or PKCE/redirect URI mismatch between start and callback. |
+| `stage=token-exchange status=401 oauth_error=invalid_client` | `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` wrong or from a different OAuth client. |
+| `stage=token-exchange … oauth_error=redirect_uri_mismatch` | `GOOGLE_REDIRECT_URI` differs from the registered URI by even one character. |
+| `stage=discovery` / `stage=token-exchange code=ETIMEDOUT` | The backend cannot reach Google (network). |
+| `stage=id-token-verify code=ERR_JWT_CLAIM_VALIDATION_FAILED claim=aud` | The ID token is for a different client id. `claim=iss`/`ERR_JWT_EXPIRED` are issuer/expiry failures. |
+| `stage=nonce-mismatch`, `stage=claims` | Replayed token / token without `sub` or `email`. |
+| `stage=post-auth code=…` | Google was fine; looking up/creating the user or the session failed (database). |
+
+At startup the backend logs `Google redirect URI in use: …`; at the first sign-in it warns
+(`Google sign-in misconfiguration …`) if `/google/start` is served for a different host than the redirect URI.
+`node scripts/verify-deployment.mjs <vercel-url> <render-url>` checks this against the real deployment.
+
+## 5. E-mail OTP delivery
+**Render free web services block outbound SMTP on ports 25, 465 and 587** (since 26 Sep 2025; paid instances are not
+affected; see Render's changelog "Free web services will no longer allow outbound traffic to SMTP ports"). On a free
+instance an SMTP connection therefore ends in `ETIMEDOUT` regardless of credentials. Choose one:
+
+1. **HTTPS e-mail API (recommended on the free tier).** Set `EMAIL_PROVIDER=resend` (or `brevo`), `EMAIL_API_KEY`
+   (secret, Render environment only) and `EMAIL_FROM` (a sender/domain you verified with the provider). Traffic uses
+   port 443, which Render does not block. No extra dependency.
+   * Resend: create an API key and verify a sending domain; use an `EMAIL_FROM` on that domain.
+   * Brevo: create an API (v3) key, and add/verify the sender address you use in `EMAIL_FROM`.
+   * Check the provider's current free-tier and sender-verification rules before relying on either.
+2. **SMTP** on a paid Render instance or another host: `SMTP_HOST/PORT/USER/PASS/FROM`
+   (587 + `SMTP_SECURE=false` for STARTTLS, 465 + `SMTP_SECURE=true` for implicit TLS).
+
+If `EMAIL_PROVIDER` is `resend`/`brevo` and both key and sender are set, the API is used and SMTP is ignored.
+The startup log says which is active (`Email delivery: HTTPS API (resend)` or `Email delivery: SMTP host:port …`).
+Free-tier limits change (Brevo ~300 mails/day, Resend ~100/day when last checked); a personal Gmail account is unsuitable.
+Codes, API keys and SMTP passwords are never logged.
+
+Failure lines (`SMTP send failed: class=…` / `Email API send failed: class=…`):
+
+| class | Meaning |
+|---|---|
+| `connect-timeout` (`ETIMEDOUT`, `command=CONN`) | The TCP connection never opened: blocked port (Render free tier) or wrong host/port. |
+| `timeout` | Connected, then the server stopped answering. |
+| `connection` | Refused / DNS failure / network unreachable. |
+| `auth` (`EAUTH`, 535 / HTTP 401, 403) | Wrong SMTP user/password or API key. |
+| `tls` | Wrong `SMTP_SECURE` for the port (465 needs `true`; 587/2525 need `false`). |
+| `rejected` (HTTP 4xx, SMTP 5xx) | Sender not verified, or recipient refused. |
+| `rate-limited` (HTTP 429) | Provider quota reached. |
+
+When sending fails the user sees "We couldn't send the email" (503) and the code that was generated is invalidated.
 
 ## 6. Rollback
 Vercel: promote the previous deployment. Render: redeploy the previous commit. Migrations are forward-only SQL files

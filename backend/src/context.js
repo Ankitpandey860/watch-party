@@ -27,7 +27,7 @@ export async function createContext({
   now = Date.now,
 } = {}) {
   const database = db || (await createDb(config.databaseUrl));
-  const mailer = createMailer({ smtp: config.smtp, transport: mailerTransport });
+  const mailer = createMailer({ smtp: config.smtp, emailApi: config.emailApi, transport: mailerTransport });
   const sessions = createSessionService({ db: database, config, now });
   const users = createUserService({ db: database, now });
   const otp = createOtpService({

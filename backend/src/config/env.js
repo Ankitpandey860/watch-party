@@ -87,6 +87,16 @@ export function loadConfig(env = process.env) {
       from: env.SMTP_FROM || "",
       enabled: Boolean(env.SMTP_HOST && env.SMTP_FROM),
     }),
+    // Optional HTTPS e-mail API (Resend or Brevo). Needed on hosts that block outbound SMTP (e.g. Render free web
+    // services block ports 25/465/587). Uses port 443 only. Default "smtp" keeps the existing behaviour.
+    emailApi: (() => {
+      const provider = String(env.EMAIL_PROVIDER || "smtp").trim().toLowerCase();
+      const known = provider === "resend" || provider === "brevo";
+      if (provider !== "smtp" && !known) throw new Error(`EMAIL_PROVIDER must be one of: smtp, resend, brevo (got "${provider}")`);
+      const from = env.EMAIL_FROM || env.SMTP_FROM || "";
+      const apiKey = env.EMAIL_API_KEY || "";
+      return Object.freeze({ provider, apiKey, from, enabled: known && Boolean(apiKey && from) });
+    })(),
     session: Object.freeze({
       userTtlMs: num(env.SESSION_TTL_DAYS, 30) * 86_400_000,
       guestTtlMs: num(env.GUEST_SESSION_TTL_HOURS, 12) * 3_600_000,
