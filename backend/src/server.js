@@ -17,6 +17,8 @@ httpServer.listen(config.port, () => {
   logger.info(`Watch Party backend listening on port ${config.port}`);
   logger.info(`Allowed origins: ${config.corsOrigins.join(", ")}`);
   logger.info(`Sign-in methods: google=${ctx.google.enabled} email=${ctx.mailer.enabled}`);
+  if (ctx.google.enabled) logger.info(`Google redirect URI in use: ${ctx.config.google.redirectUri}`); // not a secret; must match Google Cloud Console exactly
+  if (ctx.mailer.enabled) logger.info(`Email delivery: ${ctx.mailer.describe}`);
 });
 
 // Render sends SIGTERM on every deploy: stop taking connections, close sockets and the pool, then exit.

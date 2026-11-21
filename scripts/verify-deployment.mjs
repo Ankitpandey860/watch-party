@@ -84,6 +84,21 @@ await check("sign-in methods advertised", async () => {
   return `google=${json?.providers?.google} email=${json?.providers?.email}`;
 });
 
+await check("Google sign-in: the redirect URI is on the SAME host that holds the flow cookie (only if Google is enabled)", async () => {
+  const me = await call(frontend, "/api/auth/me", { useCookie: false });
+  if (!me.json?.providers?.google) return "skipped: Google sign-in is not enabled on this deployment";
+  const { res } = await call(frontend, "/api/auth/google/start?returnTo=%2F", { useCookie: false });
+  assert(res.status === 302, `/api/auth/google/start returned ${res.status}, expected a 302 to Google`);
+  const loc = new URL(res.headers.get("location"));
+  assert(loc.hostname === "accounts.google.com", `redirects to ${loc.hostname}, not Google`);
+  const redirectUri = new URL(loc.searchParams.get("redirect_uri"));
+  const flowCookie = res.headers.getSetCookie().find((c) => c.startsWith("wp_oauth="));
+  assert(flowCookie, "no wp_oauth flow cookie reached the browser side through the rewrite");
+  assert(redirectUri.hostname === new URL(frontend).hostname, // cookies are scoped by host name, not port
+    `GOOGLE_REDIRECT_URI is ${redirectUri.origin}${redirectUri.pathname} but sign-in starts on ${new URL(frontend).hostname}. Google sends the browser back to a different host, so the flow cookie is not sent to the callback and sign-in fails with "OAUTH_UNAVAILABLE" (stage=flow-cookie-missing). Set GOOGLE_REDIRECT_URI=${frontend}/api/auth/google/callback on the backend and register exactly that URI in Google Cloud Console.`);
+  return `redirect_uri=${redirectUri.origin}${redirectUri.pathname}  (register exactly this in Google Cloud Console)`;
+});
+
 await check("logout revokes the session server-side", async () => {
   const stolen = cookie;
   const out = await call(frontend, "/api/auth/logout", { method: "POST" });
