@@ -80,9 +80,9 @@ jobs:
       - run: npm ci
 
       # Apply database migrations before integration tests.
-      - run: npm run migrate
-
-      - run: npm test
+      # Tests manage their own schema through the test harness.
+      # Run files serially because they share one PostgreSQL test database.
+      - run: npm test -- --test-concurrency=1
 
   frontend:
     name: Frontend lint, tests, build
